@@ -101,8 +101,8 @@ impl Contract {
             owner_id,
             NFTContractMetadata {
                 spec: NFT_METADATA_SPEC.to_string(),
-                name: "Example NEAR non-fungible token".to_string(),
-                symbol: "EXAMPLE".to_string(),
+                name: "Near Book Shop".to_string(),
+                symbol: "Near Book SHop".to_string(),
                 icon: Some(DATA_IMAGE_SVG_NEAR_ICON.to_string()),
                 base_uri: None,
                 reference: None,
@@ -151,14 +151,14 @@ impl Contract {
         let caller_id = env::predecessor_account_id();
 
         if creator_id.is_some() {
-            assert_eq!(creator_id.unwrap().to_string(), caller_id, "Paras: Caller is not creator_id");
+            assert_eq!(creator_id.unwrap().to_string(), caller_id, "Caller is not creator_id");
         }
 
         let token_series_id = format!("{}", (self.token_series_by_id.len() + 1));
 
         assert!(
             self.token_series_by_id.get(&token_series_id).is_none(),
-            "Paras: duplicate token_series_id"
+            "duplicate token_series_id"
         );
 
         let title = token_metadata.title.clone();
@@ -180,17 +180,17 @@ impl Contract {
             HashMap::new()
         };
 
-        assert!(total_accounts <= 10, "Paras: royalty exceeds 10 accounts");
+        assert!(total_accounts <= 10, "royalty exceeds 10 accounts");
 
         assert!(
             total_perpetual <= 9000,
-            "Paras Exceeds maximum royalty -> 9000",
+            "Exceeds maximum royalty -> 9000",
         );
 
         let price_res: Option<u128> = if price.is_some() {
             assert!(
                 price.unwrap().0 < MAX_PRICE,
-                "Paras: price higher than {}",
+                "price higher than {}",
                 MAX_PRICE
             );
             Some(price.unwrap().0)
@@ -247,8 +247,8 @@ impl Contract {
     ) -> TokenId {
         let initial_storage_usage = env::storage_usage();
 
-        let token_series = self.token_series_by_id.get(&token_series_id).expect("Paras: Token series not exist");
-        assert_eq!(env::predecessor_account_id(), token_series.creator_id, "Paras: not creator");
+        let token_series = self.token_series_by_id.get(&token_series_id).expect("Token series not exist");
+        assert_eq!(env::predecessor_account_id(), token_series.creator_id, "not creator");
         let token_id: TokenId = self._nft_mint_series(token_series_id, receiver_id.to_string());
 
         refund_deposit(env::storage_usage() - initial_storage_usage);
@@ -262,10 +262,10 @@ impl Contract {
         token_series_id: TokenSeriesId, 
         receiver_id: AccountId
     ) -> TokenId {
-        let mut token_series = self.token_series_by_id.get(&token_series_id).expect("Paras: Token series not exist");
+        let mut token_series = self.token_series_by_id.get(&token_series_id).expect("Token series not exist");
         assert!(
             token_series.is_mintable,
-            "Paras: Token series is not mintable"
+            "Token series is not mintable"
         );
 
         let num_tokens = token_series.tokens.len();
@@ -282,23 +282,19 @@ impl Contract {
 
    
         let metadata = Some(TokenMetadata {
-            title: None,          // ex. "Arch Nemesis: Mail Carrier" or "Parcel #5055"
-            description: None,    // free-form description
-            media: None, // URL to associated media, preferably to decentralized, content-addressed storage
-            media_hash: None, // Base64-encoded sha256 hash of content referenced by the `media` field. Required if `media` is included.
-            copies: None, // number of copies of this set of metadata in existence when token was minted.
-            issued_at: Some(env::block_timestamp().to_string()), // ISO 8601 datetime when token was issued or minted
-            expires_at: None, // ISO 8601 datetime when token expires
-            starts_at: None, // ISO 8601 datetime when token starts being valid
-            updated_at: None, // ISO 8601 datetime when token was last updated
-            extra: None, // anything extra the NFT wants to store on-chain. Can be stringified JSON.
-            reference: None, // URL to an off-chain JSON file with more info.
-            reference_hash: None, // Base64-encoded sha256 hash of JSON from reference field. Required if `reference` is included.
+            title: token_series.metadata.title.clone(),          
+            description: token_series.metadata.description.clone(),   
+            media: token_series.metadata.media.clone(),
+            media_hash: None, 
+            copies: None, 
+            issued_at: Some(env::block_timestamp().to_string()), 
+            expires_at: None, 
+            starts_at: None, 
+            updated_at: None, 
+            extra: None, 
+            reference: None,
+            reference_hash: None, 
         });
-
-        //let token = self.tokens.mint(token_id, receiver_id, metadata);
-        // From : https://github.com/near/near-sdk-rs/blob/master/near-contract-standards/src/non_fungible_token/core/core_impl.rs#L359
-        // This allows lazy minting
 
         let owner_id: AccountId = receiver_id;
         self.tokens.owner_by_id.insert(&token_id, &owner_id);
@@ -356,12 +352,40 @@ impl Contract {
                 self.profile[i].website = website.to_string();
                 env::log(b"profile Update");
                 return "profile Update".to_string();
-                break;
             }
         }
         env::panic(b"user not found");
         return "user not found".to_string();
     }
+
+
+    // views
+    pub fn get_nft_series_single(&self, token_series_id: TokenSeriesId) -> TokenSeriesJson {
+		let token_series = self.token_series_by_id.get(&token_series_id).expect("Series does not exist");
+		TokenSeriesJson{
+            token_series_id,
+			metadata: token_series.metadata,
+			creator_id: token_series.creator_id,
+            royalty: token_series.royalty,
+		}
+	}
+
+    pub fn get_profile(&self) -> Vec<ProfileObjects> {
+        let mut result: Vec<ProfileObjects> = Vec::new();
+        for i in 0..self.profile.len() {
+            if self.profile[i].user_id == env::signer_account_id() {
+                result.push(ProfileObjects {
+                    user_id: self.profile[i].user_id.to_string(),
+                    name: self.profile[i].name.to_string(),
+                    last_name: self.profile[i].last_name.to_string(),
+                    email: self.profile[i].email.to_string(),
+                    bio: self.profile[i].bio.to_string(),
+                    website: self.profile[i].website.to_string(),
+                });
+            }
+        }
+        result
+	}
 }
 
 near_contract_standards::impl_non_fungible_token_core!(Contract, tokens);
