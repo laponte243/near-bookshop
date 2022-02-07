@@ -1,7 +1,7 @@
 
-/* use near_contract_standards::non_fungible_token::core::{
+use near_contract_standards::non_fungible_token::core::{
     NonFungibleTokenCore, NonFungibleTokenResolver,
-}; */
+};
 use near_contract_standards::non_fungible_token::metadata::{
     NFTContractMetadata, NonFungibleTokenMetadataProvider, TokenMetadata, NFT_METADATA_SPEC,
 };
@@ -19,11 +19,8 @@ use near_sdk::collections::{LazyOption, UnorderedMap, UnorderedSet};
 
 use serde::Serialize;
 use serde::Deserialize;
-// use std::collections::HashMap;
+use std::collections::HashMap;
 use near_sdk::env::is_valid_account_id;
-
-
-
 
 near_sdk::setup_alloc!();
 
@@ -33,6 +30,8 @@ pub type TokenSeriesId = String;
 
 const MAX_PRICE: Balance = 1_000_000_000 * 10u128.pow(24);
 pub const TOKEN_DELIMETER: char = ':';
+pub const TITLE_DELIMETER: &str = " #";
+
 
 #[derive(BorshDeserialize, BorshSerialize)]
 pub struct TokenSeries {
@@ -55,7 +54,7 @@ pub struct TokenSeriesJson {
 }
 
 
-#[derive(Serialize, Deserialize, BorshDeserialize, BorshSerialize)]
+#[derive(BorshDeserialize, BorshSerialize, Serialize, Deserialize)]
 #[serde(crate = "near_sdk::serde")]
 pub struct ProfileObjects {
     name: String,
@@ -101,7 +100,7 @@ impl Contract {
             NFTContractMetadata {
                 spec: NFT_METADATA_SPEC.to_string(),
                 name: "Near Book Shop".to_string(),
-                symbol: "Near Book SHop".to_string(),
+                symbol: "Near Book Shop".to_string(),
                 icon: Some(DATA_IMAGE_SVG_NEAR_ICON.to_string()),
                 base_uri: None,
                 reference: None,
@@ -141,17 +140,12 @@ impl Contract {
     #[payable]
     pub fn nft_series(
         &mut self,
-        creator_id: Option<ValidAccountId>,
         token_metadata: TokenMetadata,
         price: Option<U128>,
         royalty: Option<HashMap<AccountId, u32>>,
     ) -> TokenSeriesJson {
         let initial_storage_usage = env::storage_usage();
-        let caller_id = env::predecessor_account_id();
-
-        if creator_id.is_some() {
-            assert_eq!(creator_id.unwrap().to_string(), caller_id, "Caller is not creator_id");
-        }
+        let caller_id = env::signer_account_id();
 
         let token_series_id = format!("{}", (self.token_series_by_id.len() + 1));
 
@@ -161,7 +155,7 @@ impl Contract {
         );
 
         let title = token_metadata.title.clone();
-        assert!(title.is_some(), "Paras: token_metadata.title is required");
+        assert!(title.is_some(), "token_metadata.title is required");
         
 
         let mut total_perpetual = 0;
@@ -179,11 +173,11 @@ impl Contract {
             HashMap::new()
         };
 
-        assert!(total_accounts <= 10, "royalty exceeds 10 accounts");
+        assert!(total_accounts <= 5, "royalty exceeds 5 accounts");
 
         assert!(
-            total_perpetual <= 9000,
-            "Exceeds maximum royalty -> 9000",
+            total_perpetual <= 4000,
+            "Exceeds maximum royalty -> 4000",
         );
 
         let price_res: Option<u128> = if price.is_some() {
@@ -212,20 +206,40 @@ impl Contract {
             royalty: royalty_res.clone(),
         });
 
-        env::log(
-            json!({
-                "type": "nft_create_series",
-                "params": {
-                    "token_series_id": token_series_id,
-                    "token_metadata": token_metadata,
-                    "creator_id": caller_id,
-                    "price": price,
-                    "royalty": royalty_res
-                }
-            })
-            .to_string()
-            .as_bytes(),
-        );
+        
+        //se crea el en collectibles del usuario signer_account
+        let metadata = Some(TokenMetadata {
+            title: token_metadata.title.clone(),          
+            description: token_metadata.description.clone(),   
+            media: token_metadata.media.clone(),
+            media_hash: None, 
+            copies: token_metadata.copies.clone(), 
+            issued_at: Some(env::block_timestamp().to_string()), 
+            expires_at: None, 
+            starts_at: None, 
+            updated_at: None, 
+            extra: None, 
+            reference: None,
+            reference_hash: None, 
+        });
+
+        self.tokens.owner_by_id.insert(&token_series_id, &caller_id);
+
+        self.tokens
+            .token_metadata_by_id
+            .as_mut()
+            .and_then(|by_id| by_id.insert(&token_series_id, &metadata.as_ref().unwrap()));
+
+         if let Some(tokens_per_owner) = &mut self.tokens.tokens_per_owner {
+             let mut token_ids = tokens_per_owner.get(&caller_id).unwrap_or_else(|| {
+                 UnorderedSet::new(StorageKey::TokensPerOwner {
+                     account_hash: env::sha256(&caller_id.as_bytes()),
+                 })
+             });
+             token_ids.insert(&token_series_id);
+             tokens_per_owner.insert(&caller_id, &token_ids);
+         } 
+
 
         refund_deposit(env::storage_usage() - initial_storage_usage);
 
@@ -248,19 +262,7 @@ impl Contract {
 
         let token_series = self.token_series_by_id.get(&token_series_id).expect("Token series not exist");
         assert_eq!(env::predecessor_account_id(), token_series.creator_id, "not creator");
-        let token_id: TokenId = self._nft_mint_series(token_series_id, receiver_id.to_string());
-
-        refund_deposit(env::storage_usage() - initial_storage_usage);
-
-        token_id
-    }
-
-
-    fn _nft_mint_series(
-        &mut self, 
-        token_series_id: TokenSeriesId, 
-        receiver_id: AccountId
-    ) -> TokenId {
+        
         let mut token_series = self.token_series_by_id.get(&token_series_id).expect("Token series not exist");
         assert!(
             token_series.is_mintable,
@@ -295,7 +297,7 @@ impl Contract {
             reference_hash: None, 
         });
 
-        let owner_id: AccountId = receiver_id;
+        let owner_id: AccountId = receiver_id.to_string();
         self.tokens.owner_by_id.insert(&token_id, &owner_id);
 
         self.tokens
@@ -313,10 +315,13 @@ impl Contract {
              tokens_per_owner.insert(&owner_id, &token_ids);
          }
 
+        refund_deposit(env::storage_usage() - initial_storage_usage);
 
         token_id
     }
 
+
+    
 
     pub fn set_profile(&mut self, name: String, last_name: String, email: String, bio: String, website: String) -> ProfileObjects {
         let mut duplicate: bool = false;
@@ -324,33 +329,36 @@ impl Contract {
         if profile.is_none() {
             duplicate = true;
         }
-
+        
         let data = ProfileObjects {
-            name: name,
-            last_name: last_name,
-            email: email,
-            bio: bio,
-            website: website,
+            name: name.to_string(),
+            last_name: last_name.to_string(),
+            email: email.to_string(),
+            bio: bio.to_string(),
+            website: website.to_string(),
         };
-        if duplicate == false {  
+
+        if duplicate == true {  
             self.profile.insert(&env::signer_account_id(), &data);
-            env::log(b"Profile Created");
+            env::log(b"profile Created");
             data
         } else {
-            env::panic(b"Profile already exists");
+            env::panic(b"profile already exists");
         }
     }
 
     pub fn put_profile(&mut self, name: String, last_name: String, email: String, bio: String, website: String) -> ProfileObjects {
-        let mut profile = self.profile.get(&env::signer_account_id().to_string()).expect("Profile not exist");
+        let mut profile = self.profile.get(&env::signer_account_id()).expect("Profile does not exist");
         profile.name = name.to_string();
         profile.last_name = last_name.to_string();
         profile.email = email.to_string();
         profile.bio = bio.to_string();
         profile.website = website.to_string();
-        
-        env::log(b"Profile Update");
-        
+
+        self.profile.insert(&env::signer_account_id(), &profile);
+
+        env::log(b"profile Update");
+
         ProfileObjects {
             name: name,
             last_name: last_name,
@@ -372,23 +380,105 @@ impl Contract {
 		}
 	}
 
-    pub fn get_profile(&self) -> ProfileObjects {
-        let profile = self.profile.get(&env::signer_account_id()).expect("Profile not exist");
-        
+    pub fn get_nft_series(
+        &self,
+        from_index: Option<U128>,
+        limit: Option<u64>,
+    ) -> Vec<TokenSeriesJson> {
+        let start_index: u128 = from_index.map(From::from).unwrap_or_default();
+        assert!(
+            (self.token_series_by_id.len() as u128) > start_index,
+            "Out of bounds, please use a smaller from_index."
+        );
+        let limit = limit.map(|v| v as usize).unwrap_or(usize::MAX);
+        assert_ne!(limit, 0, "Cannot provide limit of 0.");
+
+        self.token_series_by_id
+            .iter()
+            .skip(start_index as usize)
+            .take(limit)
+            .map(|(token_series_id, token_series)| TokenSeriesJson{
+                token_series_id,
+                metadata: token_series.metadata,
+                creator_id: token_series.creator_id,
+                royalty: token_series.royalty,
+            })
+            .collect()
+    }
+
+    pub fn get_nft_series_copy(
+        &self,
+        token_series_id: TokenSeriesId,
+        from_index: Option<U128>,
+        limit: Option<u64>,
+    ) -> Vec<Token> {
+        let start_index: u128 = from_index.map(From::from).unwrap_or_default();
+        let tokens = self.token_series_by_id.get(&token_series_id).unwrap().tokens;
+        assert!(
+            (tokens.len() as u128) > start_index,
+            "Out of bounds, please use a smaller from_index."
+        );
+        let limit = limit.map(|v| v as usize).unwrap_or(usize::MAX);
+        assert_ne!(limit, 0, "Cannot provide limit of 0.");
+
+        tokens
+            .iter()
+            .skip(start_index as usize)
+            .take(limit)
+            .map(|token_id| self.nft_token(token_id).unwrap())
+            .collect()
+    }
+
+    pub fn nft_token(&self, token_id: TokenId) -> Option<Token> {
+        let owner_id = self.tokens.owner_by_id.get(&token_id)?;
+        let approved_account_ids = self
+            .tokens
+            .approvals_by_id
+            .as_ref()
+            .and_then(|by_id| by_id.get(&token_id).or_else(|| Some(HashMap::new())));
+
+        let mut token_id_iter = token_id.split(TOKEN_DELIMETER);
+        let token_series_id = token_id_iter.next().unwrap().parse().unwrap();
+        let series_metadata = self.token_series_by_id.get(&token_series_id).unwrap().metadata;
+
+        let mut token_metadata = self.tokens.token_metadata_by_id.as_ref().unwrap().get(&token_id).unwrap();
+
+        token_metadata.title = Some(format!(
+            "{}{}{}",
+            series_metadata.title.unwrap(),
+            TITLE_DELIMETER,
+            token_id_iter.next().unwrap()
+        ));
+
+        token_metadata.reference = series_metadata.reference;
+        token_metadata.media = series_metadata.media;
+        token_metadata.copies = series_metadata.copies;
+
+        Some(Token {
+            token_id,
+            owner_id,
+            metadata: Some(token_metadata),
+            approved_account_ids,
+        })
+    }
+
+
+    pub fn get_profile(&self, user_id: AccountId) -> ProfileObjects {
+        let profile = self.profile.get(&user_id).expect("Profile does not exist");
+
         ProfileObjects {
-            name: profile.name,
-            last_name: profile.last_name,
-            email: profile.email,
-            bio: profile.bio,
-            website: profile.website,
+            name: profile.name.to_string(),
+            last_name: profile.last_name.to_string(),
+            email: profile.email.to_string(),
+            bio: profile.bio.to_string(),
+            website: profile.website.to_string(),
         }
 	}
 
 
-
 }
 
-near_contract_standards::impl_non_fungible_token_core!(Contract, tokens);
+/*near_contract_standards::impl_non_fungible_token_core!(Contract, tokens);*/
 near_contract_standards::impl_non_fungible_token_approval!(Contract, tokens);
 near_contract_standards::impl_non_fungible_token_enumeration!(Contract, tokens);
 
