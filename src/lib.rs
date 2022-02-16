@@ -13,7 +13,7 @@ use near_sdk::borsh::{self, BorshDeserialize, BorshSerialize};
 use near_sdk::json_types::ValidAccountId;
 use near_sdk::{
     env, near_bindgen, AccountId, BorshStorageKey, PanicOnDefault, Promise, PromiseOrValue, Balance,
-    serde_json::json,
+    serde_json::json, assert_one_yocto,
 };
 use near_sdk::collections::{LazyOption, UnorderedMap, UnorderedSet};
 
@@ -50,6 +50,24 @@ pub struct CategoriesJson {
 	name: String,
 }
 
+#[derive(BorshDeserialize, BorshSerialize, Serialize, Deserialize)]
+#[serde(crate = "near_sdk::serde")]
+pub struct MarketJson {
+    metadata: TokenMetadata,
+    creator_id: AccountId,
+    price: Balance,
+    category: Option<i128>,
+    royalty: HashMap<AccountId, u32>
+}
+
+#[derive(BorshDeserialize, BorshSerialize, Serialize, Deserialize)]
+#[serde(crate = "near_sdk::serde")]
+pub struct Transaction {
+    token_id: i128,
+	name: String,
+}
+
+
 #[derive(BorshDeserialize, BorshSerialize)]
 pub struct TokenSeries {
 	metadata: TokenMetadata,
@@ -80,6 +98,7 @@ pub struct Contract {
     token_series_by_id: UnorderedMap<TokenSeriesId, TokenSeries>,
     profile: UnorderedMap<AccountId, ProfileObjects>,
     categories: UnorderedMap<i128, String>,
+    marketplace: UnorderedMap<TokenSeriesId, MarketJson>,
 }
 
 const DATA_IMAGE_SVG_NEAR_ICON: &str = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 288 288'%3E%3Cg id='l' data-name='l'%3E%3Cpath d='M187.58,79.81l-30.1,44.69a3.2,3.2,0,0,0,4.75,4.2L191.86,103a1.2,1.2,0,0,1,2,.91v80.46a1.2,1.2,0,0,1-2.12.77L102.18,77.93A15.35,15.35,0,0,0,90.47,72.5H87.34A15.34,15.34,0,0,0,72,87.84V201.16A15.34,15.34,0,0,0,87.34,216.5h0a15.35,15.35,0,0,0,13.08-7.31l30.1-44.69a3.2,3.2,0,0,0-4.75-4.2L96.14,186a1.2,1.2,0,0,1-2-.91V104.61a1.2,1.2,0,0,1,2.12-.77l89.55,107.23a15.35,15.35,0,0,0,11.71,5.43h3.13A15.34,15.34,0,0,0,216,201.16V87.84A15.34,15.34,0,0,0,200.66,72.5h0A15.35,15.35,0,0,0,187.58,79.81Z'/%3E%3C/g%3E%3C/svg%3E";
@@ -132,6 +151,7 @@ impl Contract {
             metadata: LazyOption::new(StorageKey::Metadata, Some(&metadata)),
             profile: UnorderedMap::new(b"s".to_vec()),
             categories: UnorderedMap::new(b"s".to_vec()),
+            marketplace: UnorderedMap::new(b"s".to_vec()),
         }
     }
 
@@ -239,16 +259,6 @@ impl Contract {
 
 
     #[payable]
-    pub fn nft_mint(
-        &mut self,
-        token_id: TokenId,
-        receiver_id: ValidAccountId,
-        token_metadata: TokenMetadata,
-    ) -> Token {
-        self.tokens.mint(token_id, receiver_id, Some(token_metadata))
-    }
-
-    #[payable]
     pub fn nft_series(
         &mut self,
         token_metadata: TokenMetadata,
@@ -302,6 +312,16 @@ impl Contract {
             None
         };
 
+        if price.is_some() {
+            self.marketplace.insert(&token_series_id, &MarketJson {
+                metadata: token_metadata.clone(),
+                creator_id: caller_id.to_string(),
+                price: price.unwrap().0,
+                category: None,
+                royalty: royalty_res.clone(),
+            });
+        }
+
         self.token_series_by_id.insert(&token_series_id, &TokenSeries{
             metadata: token_metadata.clone(),
             creator_id: caller_id.to_string(),
@@ -316,41 +336,6 @@ impl Contract {
             is_mintable: true,
             royalty: royalty_res.clone(),
         });
-
-        
-        //se crea el en collectibles del usuario signer_account
-        let metadata = Some(TokenMetadata {
-            title: token_metadata.title.clone(),          
-            description: token_metadata.description.clone(),   
-            media: token_metadata.media.clone(),
-            media_hash: None, 
-            copies: token_metadata.copies.clone(), 
-            issued_at: Some(env::block_timestamp().to_string()), 
-            expires_at: None, 
-            starts_at: None, 
-            updated_at: None, 
-            extra: None, 
-            reference: None,
-            reference_hash: None, 
-        });
-
-        self.tokens.owner_by_id.insert(&token_series_id, &caller_id);
-
-        self.tokens
-            .token_metadata_by_id
-            .as_mut()
-            .and_then(|by_id| by_id.insert(&token_series_id, &metadata.as_ref().unwrap()));
-
-         if let Some(tokens_per_owner) = &mut self.tokens.tokens_per_owner {
-             let mut token_ids = tokens_per_owner.get(&caller_id).unwrap_or_else(|| {
-                 UnorderedSet::new(StorageKey::TokensPerOwner {
-                     account_hash: env::sha256(&caller_id.as_bytes()),
-                 })
-             });
-             token_ids.insert(&token_series_id);
-             tokens_per_owner.insert(&caller_id, &token_ids);
-         } 
-
 
         refund_deposit(env::storage_usage() - initial_storage_usage);
 
@@ -432,6 +417,63 @@ impl Contract {
     }
 
 
+    #[payable]
+    pub fn put_nft_series_price(&mut self, token_series_id: TokenSeriesId
+        , price: Option<U128>
+    ) -> Option<U128> {
+        assert_one_yocto();
+
+        let mut token_series = self.token_series_by_id.get(&token_series_id).expect("Token series not exist");
+        assert_eq!(
+            env::predecessor_account_id(),
+            token_series.creator_id,
+            "Creator only"
+        );
+
+        let token_metadata = token_series.metadata.clone();
+        let caller_id = token_series.creator_id.clone();
+        let royalty_res = token_series.royalty.clone();
+
+        assert_eq!(
+            token_series.is_mintable,
+            true,
+            "token series is not mintable"
+        );
+
+        if price.is_none() {
+            if self.marketplace.get(&token_series_id).is_some() {
+                self.marketplace.remove(&token_series_id);
+            };
+            token_series.price = None;
+        } else {
+            assert!(
+                price.unwrap().0 < MAX_PRICE,
+                "price higher than {}",
+                MAX_PRICE
+            );
+            
+            if self.marketplace.get(&token_series_id).is_some() {
+                let mut market = self.marketplace.get(&token_series_id).expect("error");
+                market.price = price.unwrap().0;
+                self.marketplace.insert(&token_series_id, &market);
+            } else {
+                self.marketplace.insert(&token_series_id, &MarketJson {
+                    metadata: token_metadata.clone(),
+                    creator_id: caller_id.to_string(),
+                    price: price.unwrap().0,
+                    category: None,
+                    royalty: royalty_res.clone(),
+                });
+            };
+            token_series.price = Some(price.unwrap().0);
+        }
+
+        self.token_series_by_id.insert(&token_series_id, &token_series);
+        
+        price
+    }
+
+    
 
     // views
     pub fn get_nft_series_single(&self, token_series_id: TokenSeriesId) -> TokenSeriesJson {
