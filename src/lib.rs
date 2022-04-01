@@ -7,7 +7,7 @@ use near_contract_standards::non_fungible_token::metadata::{
 };
 use near_contract_standards::non_fungible_token::NonFungibleToken;
 use near_contract_standards::non_fungible_token::{Token, TokenId};
-use near_contract_standards::non_fungible_token::refund_deposit;
+
 
 use near_sdk::borsh::{self, BorshDeserialize, BorshSerialize};
 use near_sdk::json_types::ValidAccountId;
@@ -28,43 +28,107 @@ near_sdk::setup_alloc!();
 
 pub type TokenSeriesId = String;
 
-const MAX_PRICE: Balance = 1_000_000_000 * 10u128.pow(24);
+
+
 pub const TOKEN_DELIMETER: char = ':';
 pub const TITLE_DELIMETER: &str = " #";
+pub const VAULT_FEE: u128 = 500;
+
+
+const MAX_PRICE: Balance = 1_000_000_000 * 10u128.pow(24);
+/*
+const GAS_FOR_RESOLVE_TRANSFER: Gas = 10_000_000_000_000;
+const GAS_FOR_NFT_TRANSFER_CALL: Gas = 30_000_000_000_000 + GAS_FOR_RESOLVE_TRANSFER;
+const GAS_FOR_NFT_APPROVE: Gas = 10_000_000_000_000;
+const GAS_FOR_MINT: Gas = 90_000_000_000_000;
+const NO_DEPOSIT: Balance = 0;
+*/
 
 
 #[derive(BorshDeserialize, BorshSerialize, Serialize, Deserialize)]
 #[serde(crate = "near_sdk::serde")]
 pub struct ProfileObjects {
-    name: String,
-    last_name: String,
-    email: String,
-    bio: String,
-    website: String,
+    name: Option<String>,
+    last_name: Option<String>,
+    pen_name: Option<String>,
+    bio: Option<String>,
+    website: Option<String>,
+    twitter: Option<String>,
+    sales: i128,
 }
 
+
 #[derive(Serialize, Deserialize)]
+#[serde(crate = "near_sdk::serde")]
+pub struct ProfileJson {
+    user_id: AccountId,
+    name: String,
+    last_name: String,
+    pen_name: String,
+    bio: String,
+    website: String,
+    twitter: String,
+    sales: i128,
+}
+
+
+#[derive(BorshDeserialize, BorshSerialize, Serialize, Deserialize, Clone)]
+#[serde(crate = "near_sdk::serde")]
+pub struct CategoriesObjet {
+	name: String,
+    img: String,
+}
+
+#[derive(Serialize, Deserialize, BorshDeserialize, BorshSerialize)]
 #[serde(crate = "near_sdk::serde")]
 pub struct CategoriesJson {
     id: i128,
 	name: String,
+    img: String,
 }
 
 #[derive(BorshDeserialize, BorshSerialize, Serialize, Deserialize)]
 #[serde(crate = "near_sdk::serde")]
 pub struct MarketJson {
+    token_series_id: TokenSeriesId,
     metadata: TokenMetadata,
+    owner_id: AccountId,
     creator_id: AccountId,
     price: Balance,
-    category: Option<i128>,
-    royalty: HashMap<AccountId, u32>
+    category: HashMap<i128, CategoriesObjet>,
+    royalty: HashMap<AccountId, u32>,
 }
 
 #[derive(BorshDeserialize, BorshSerialize, Serialize, Deserialize)]
 #[serde(crate = "near_sdk::serde")]
-pub struct Transaction {
-    token_id: i128,
-	name: String,
+pub struct MarketView {
+    token_series_id: TokenSeriesId,
+    metadata: TokenMetadata,
+    owner_id: AccountId,
+    creator_id: AccountId,
+    price: Balance,
+    category: HashMap<i128, CategoriesObjet>,
+    royalty: HashMap<AccountId, u32>,
+    reviews: Vec<Review>,
+}
+
+
+#[derive(BorshDeserialize, BorshSerialize, Serialize, Deserialize)]
+#[serde(crate = "near_sdk::serde")]
+pub struct TransactionJson {
+    token_id: TokenSeriesId,
+    operations: i128,
+    sales: i128,
+    operation_history: Vec<OperationHistory>,
+}
+
+
+#[derive(BorshDeserialize, BorshSerialize, Serialize, Deserialize)]
+#[serde(crate = "near_sdk::serde")]
+pub struct OperationHistory {
+    owner_id: AccountId,
+    price: Balance,
+    date: u64,
 }
 
 
@@ -75,11 +139,21 @@ pub struct TokenSeries {
 	tokens: UnorderedSet<TokenId>,
     price: Option<Balance>,
     is_mintable: bool,
-    royalty: HashMap<AccountId, u32>
+    category: HashMap<i128, CategoriesObjet>,
+    royalty: HashMap<AccountId, u32>,
+    reviews: UnorderedSet<Review>,
 }
 
 
-#[derive(Serialize, Deserialize)]
+#[derive(BorshDeserialize, BorshSerialize, Serialize, Deserialize)]
+pub struct Review {
+    user_id: AccountId,
+    review: String,
+    critics: i8,
+}
+
+
+#[derive(BorshDeserialize, BorshSerialize, Serialize, Deserialize)]
 #[serde(crate = "near_sdk::serde")]
 pub struct TokenSeriesJson {
     token_series_id: TokenSeriesId,
@@ -96,9 +170,12 @@ pub struct Contract {
     metadata: LazyOption<NFTContractMetadata>,
     // CUSTOM
     token_series_by_id: UnorderedMap<TokenSeriesId, TokenSeries>,
+    vault_id: AccountId,
     profile: UnorderedMap<AccountId, ProfileObjects>,
-    categories: UnorderedMap<i128, String>,
+    categories: UnorderedMap<i128, CategoriesObjet>,
     marketplace: UnorderedMap<TokenSeriesId, MarketJson>,
+    transaction: UnorderedMap<TokenSeriesId, TransactionJson>,
+    administrators: Vec<AccountId>,
 }
 
 const DATA_IMAGE_SVG_NEAR_ICON: &str = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 288 288'%3E%3Cg id='l' data-name='l'%3E%3Cpath d='M187.58,79.81l-30.1,44.69a3.2,3.2,0,0,0,4.75,4.2L191.86,103a1.2,1.2,0,0,1,2,.91v80.46a1.2,1.2,0,0,1-2.12.77L102.18,77.93A15.35,15.35,0,0,0,90.47,72.5H87.34A15.34,15.34,0,0,0,72,87.84V201.16A15.34,15.34,0,0,0,87.34,216.5h0a15.35,15.35,0,0,0,13.08-7.31l30.1-44.69a3.2,3.2,0,0,0-4.75-4.2L96.14,186a1.2,1.2,0,0,1-2-.91V104.61a1.2,1.2,0,0,1,2.12-.77l89.55,107.23a15.35,15.35,0,0,0,11.71,5.43h3.13A15.34,15.34,0,0,0,216,201.16V87.84A15.34,15.34,0,0,0,200.66,72.5h0A15.35,15.35,0,0,0,187.58,79.81Z'/%3E%3C/g%3E%3C/svg%3E";
@@ -120,9 +197,10 @@ enum StorageKey {
 #[near_bindgen]
 impl Contract {
     #[init]
-    pub fn new_default_meta(owner_id: ValidAccountId) -> Self {
+    pub fn new_default_meta(owner_id: ValidAccountId, vault_id: ValidAccountId) -> Self {
         Self::new(
             owner_id,
+            vault_id,
             NFTContractMetadata {
                 spec: NFT_METADATA_SPEC.to_string(),
                 name: "Near Book Shop".to_string(),
@@ -136,7 +214,7 @@ impl Contract {
     }
 
     #[init]
-    pub fn new(owner_id: ValidAccountId, metadata: NFTContractMetadata) -> Self {
+    pub fn new(owner_id: ValidAccountId, vault_id: ValidAccountId, metadata: NFTContractMetadata) -> Self {
         assert!(!env::state_exists(), "Already initialized");
         metadata.assert_valid();
         Self {
@@ -149,55 +227,74 @@ impl Contract {
             ),
             token_series_by_id: UnorderedMap::new(StorageKey::TokenSeriesById),
             metadata: LazyOption::new(StorageKey::Metadata, Some(&metadata)),
+            vault_id: vault_id.to_string(),
             profile: UnorderedMap::new(b"s".to_vec()),
             categories: UnorderedMap::new(b"s".to_vec()),
-            marketplace: UnorderedMap::new(b"s".to_vec()),
+            marketplace: UnorderedMap::new(b"0".to_vec()),
+            transaction: UnorderedMap::new(b"s".to_vec()),
+            administrators: vec!["bookshop.testnet".to_string(), "book.bookshop.testnet".to_string()],
         }
     }
 
-    pub fn set_profile(&mut self, name: String, last_name: String, email: String, bio: String, website: String) -> ProfileObjects {
-        let mut duplicate: bool = false;
+    pub fn set_profile(&mut self, name: Option<String>,
+        last_name: Option<String>,
+        pen_name: Option<String>,
+        bio: Option<String>,
+        website: Option<String>,
+        twitter: Option<String>
+    ) -> ProfileObjects {
         let profile = self.profile.get(&env::signer_account_id());
-        if profile.is_none() {
-            duplicate = true;
+        if profile.is_some() {
+            env::panic(b"profile already exists");
         }
         
         let data = ProfileObjects {
-            name: name.to_string(),
-            last_name: last_name.to_string(),
-            email: email.to_string(),
-            bio: bio.to_string(),
-            website: website.to_string(),
+            name: name,
+            last_name: last_name,
+            pen_name: pen_name,
+            bio: bio,
+            website: website,
+            twitter: twitter,
+            sales: 0,
         };
 
-        if duplicate == true {  
-            self.profile.insert(&env::signer_account_id(), &data);
-            env::log(b"profile Created");
-            data
-        } else {
-            env::panic(b"profile already exists");
-        }
+        self.profile.insert(&env::signer_account_id(), &data);
+        env::log(b"profile Created");
+        data
     }
 
-    pub fn put_profile(&mut self, name: String, last_name: String, email: String, bio: String, website: String) -> ProfileObjects {
+    pub fn put_profile(&mut self, name: Option<String>,
+        last_name: Option<String>,
+        pen_name: Option<String>,
+        bio: Option<String>,
+        website: Option<String>,
+        twitter: Option<String>
+    ) -> ProfileObjects {
+        let mut return_data = ProfileObjects {
+            name: name.clone(),
+            last_name: last_name.clone(),
+            pen_name: pen_name.clone(),
+            bio: bio.clone(),
+            website: website.clone(),
+            twitter: twitter.clone(),
+            sales: 0,
+        };
         let mut profile = self.profile.get(&env::signer_account_id()).expect("Profile does not exist");
-        profile.name = name.to_string();
-        profile.last_name = last_name.to_string();
-        profile.email = email.to_string();
-        profile.bio = bio.to_string();
-        profile.website = website.to_string();
+        profile.name = name;
+        profile.last_name = last_name;
+        profile.pen_name = pen_name;
+        profile.bio = bio;
+        profile.website = website;
+        profile.twitter = twitter;
+
+        let sales = profile.sales.clone();
+        return_data.sales = sales;
 
         self.profile.insert(&env::signer_account_id(), &profile);
 
         env::log(b"profile Update");
 
-        ProfileObjects {
-            name: name,
-            last_name: last_name,
-            email: email,
-            bio: bio,
-            website: website,
-        }
+        return_data
     }
 
 
@@ -205,28 +302,39 @@ impl Contract {
         let profile = self.profile.get(&user_id).expect("Profile does not exist");
 
         ProfileObjects {
-            name: profile.name.to_string(),
-            last_name: profile.last_name.to_string(),
-            email: profile.email.to_string(),
-            bio: profile.bio.to_string(),
-            website: profile.website.to_string(),
+            name: profile.name,
+            last_name: profile.last_name,
+            pen_name: profile.pen_name,
+            bio: profile.bio,
+            website: profile.website,
+            twitter: profile.twitter,
+            sales: profile.sales,
         }
 	}
 
-    pub fn set_category(&mut self, name: String) -> CategoriesJson {      
-        let category_id = (self.categories.len() + 1) as i128;
-        self.categories.insert(&category_id, &name);
-        env::log(b"category Created");
-        
-        CategoriesJson {
+    pub fn set_category(&mut self, name: String, img: String) -> CategoriesJson {      
+        self.administrators.iter().find(|&x| x == &env::signer_account_id()).expect("Only administrators can set categories");
+        let category_id: i128 = (self.categories.len() + 1) as i128;
+        let return_data = CategoriesJson {
             id: category_id,
             name: name.to_string(),
-        }
+            img: img.to_string(),
+        };
+        let data: CategoriesObjet = CategoriesObjet {
+            name: name,
+            img: img,
+        };
+        self.categories.insert(&category_id, &data);
+        env::log(b"category Created");
+        
+        return_data
     }
 
-    pub fn put_category(&mut self, category_id: i128, name: String) -> CategoriesJson {
+    pub fn put_category(&mut self, category_id: i128, name: String, img: String) -> CategoriesJson {
+        self.administrators.iter().find(|&x| x == &env::signer_account_id()).expect("Only admins can edit categories");
         let mut categories = self.categories.get(&category_id).expect("Category does not exist");
-        categories = name.to_string();
+        categories.name = name.to_string();
+        categories.img = img.to_string();
 
         self.categories.insert(&category_id, &categories);
 
@@ -235,24 +343,23 @@ impl Contract {
         CategoriesJson {
             id: category_id,
             name: name.to_string(),
+            img: img.to_string(),
         }
     }
 
     pub fn get_category(&self, category_id: Option<i128>) -> Vec<CategoriesJson> {
-        let mut categories = Vec::new();
+        let mut categories = self.categories.iter().map(|(k, s)| CategoriesJson {
+            id: k,
+            name: s.name.to_string(),
+            img: s.img.to_string(),
+        }).collect();
+
         if category_id.is_some() {
-            let category = self.categories.get(&category_id.unwrap()).expect("Category does not exist");
-            categories.push(CategoriesJson {
-                id: category_id.unwrap(),
-                name: category.to_string(),
-            });
-        } else {
-            for (key, value) in self.categories.iter() {
-                categories.push(CategoriesJson {
-                    id: key,
-                    name: value.to_string(),
-                });
-            }
+            categories = self.categories.iter().filter(|(k, _s)| k == &category_id.unwrap()).map(|(k, s)| CategoriesJson {
+                id: k,
+                name: s.name.to_string(),
+                img: s.img.to_string(),
+            }).collect();
         }
         categories
     }
@@ -262,6 +369,7 @@ impl Contract {
     pub fn nft_series(
         &mut self,
         token_metadata: TokenMetadata,
+        category: Vec<i128>,
         price: Option<U128>,
         royalty: Option<HashMap<AccountId, u32>>,
     ) -> TokenSeriesJson {
@@ -294,11 +402,11 @@ impl Contract {
             HashMap::new()
         };
 
-        assert!(total_accounts <= 5, "royalty exceeds 5 accounts");
+        assert!(total_accounts <= 10, "royalty exceeds 10 accounts");
 
         assert!(
-            total_perpetual <= 4000,
-            "Exceeds maximum royalty -> 4000",
+            total_perpetual <= 9000,
+            "Exceeds maximum royalty -> 9000",
         );
 
         let price_res: Option<u128> = if price.is_some() {
@@ -312,15 +420,29 @@ impl Contract {
             None
         };
 
+        let category_res: Vec<i128> = category.clone();
+        let mut categorys: HashMap<i128, CategoriesObjet> = HashMap::new();
+        
+        category_res.iter().map(|x| {
+            let category = self.categories.get(x).expect("Category does not exist");
+            categorys.insert(*x, CategoriesObjet {
+                name: category.name.clone(),
+                img: category.img.clone(),
+            });
+        });
+
         if price.is_some() {
             self.marketplace.insert(&token_series_id, &MarketJson {
+                token_series_id: token_series_id.to_string(),
                 metadata: token_metadata.clone(),
+                owner_id: caller_id.to_string(),
                 creator_id: caller_id.to_string(),
                 price: price.unwrap().0,
-                category: None,
+                category: categorys.clone(),
                 royalty: royalty_res.clone(),
             });
         }
+
 
         self.token_series_by_id.insert(&token_series_id, &TokenSeries{
             metadata: token_metadata.clone(),
@@ -334,10 +456,27 @@ impl Contract {
             ),
             price: price_res,
             is_mintable: true,
+            category: categorys.clone(),
             royalty: royalty_res.clone(),
+            reviews: UnorderedSet::new(b"s".to_vec()),
         });
 
-        refund_deposit(env::storage_usage() - initial_storage_usage);
+        env::log(
+            json!({
+                "type": "nft_create_series",
+                "params": {
+                    "token_series_id": token_series_id,
+                    "token_metadata": token_metadata,
+                    "creator_id": caller_id,
+                    "price": price,
+                    "royalty": royalty_res
+                }
+            })
+            .to_string()
+            .as_bytes(),
+        );
+
+        refund_deposit(env::storage_usage() - initial_storage_usage, 0);
 
 		TokenSeriesJson{
             token_series_id,
@@ -346,6 +485,7 @@ impl Contract {
             royalty: royalty_res,
 		}
     }
+
     
 
     #[payable]
@@ -356,10 +496,190 @@ impl Contract {
     ) -> TokenId {
         let initial_storage_usage = env::storage_usage();
 
+        let token = token_series_id.clone();
+
         let token_series = self.token_series_by_id.get(&token_series_id).expect("Token series not exist");
         assert_eq!(env::predecessor_account_id(), token_series.creator_id, "not creator");
+        let token_id: TokenId = self._nft_mint_series(token_series_id, receiver_id.to_string());
         
+        
+        // self.transaction_add(token, receiver_id.to_string(), 0);
+
+
+        refund_deposit(env::storage_usage() - initial_storage_usage, 0);
+
+        token_id
+    }
+
+
+    #[payable]
+    pub fn put_nft_series_price(&mut self, token_series_id: TokenSeriesId
+        , price: Option<U128>
+    ) -> Option<U128> {
+        assert_one_yocto();
+        let mut owner_by_id: Option<AccountId> = None;
+        let mut token_id: TokenSeriesId = token_series_id.clone(); 
+        let mut category: HashMap<i128, CategoriesObjet> = HashMap::new();
+        match token_series_id.split(TOKEN_DELIMETER).collect::<Vec<&str>>().len() {
+            1=> {
+                    token_id = token_series_id.clone();
+                    let mut token_series = self.token_series_by_id.get(&token_id).expect("Token series not exist");
+                    assert_eq!(
+                        env::predecessor_account_id(),
+                        token_series.creator_id,
+                        "Creator only"
+                    );
+                    owner_by_id = Some(token_series.creator_id.clone());
+                    category = token_series.category.clone();
+                    assert_eq!(
+                        token_series.is_mintable,
+                        true,
+                        "token series is not mintable"
+                    );
+                    
+                    if price.is_none() {
+                        token_series.price = None;
+                    } else {
+                        assert!(
+                            price.unwrap().0 < MAX_PRICE,
+                            "price higher than {}",
+                            MAX_PRICE
+                        );
+                        token_series.price = Some(price.unwrap().0);
+                    }
+            
+                    self.token_series_by_id.insert(&token_id, &token_series);
+                },
+            2=> {
+                    token_id = token_series_id.split(TOKEN_DELIMETER).collect::<Vec<&str>>()[0].to_string();
+                    let token_series = self.token_series_by_id.get(&token_id).expect("Token series not exist");
+                    category = token_series.category;
+                    let owner_id = self.tokens.owner_by_id.get(&token_series_id).expect("No token id");
+                    owner_by_id = Some(owner_id);
+                    
+                    
+                },
+            _=> env::panic(b"token_series_id invalid"),
+        };
+
+        if owner_by_id.is_some() {
+            let tokenseries = self.token_series_by_id.get(&token_id).expect("Token series not exist");
+        
+            let token_metadata = tokenseries.metadata.clone();
+            let caller_id = tokenseries.creator_id.clone();
+            let royalty_res = tokenseries.royalty.clone();
+
+            if price.is_none() {
+                if self.marketplace.get(&token_series_id).is_some() {
+                    self.marketplace.remove(&token_series_id);
+                };
+            } else {
+                assert!(
+                    price.unwrap().0 < MAX_PRICE,
+                    "price higher than {}",
+                    MAX_PRICE
+                );
+                if self.marketplace.get(&token_series_id).is_some() {
+                    let mut market = self.marketplace.get(&token_series_id).expect("error");
+                    market.price = price.unwrap().0;
+                    self.marketplace.insert(&token_series_id, &market);
+                } else {
+                    self.marketplace.insert(&token_series_id, &MarketJson {
+                        token_series_id: token_series_id.to_string(),
+                        metadata: token_metadata.clone(),
+                        owner_id: owner_by_id.unwrap(),
+                        creator_id: caller_id.to_string(),
+                        price: price.unwrap().0,
+                        category: category,
+                        royalty: royalty_res.clone(),
+                    });
+                };
+            }
+        } else {
+            env::panic(b"token_series_id invalid");
+        };
+        price
+    }
+    
+    #[payable]
+    pub fn nft_buy(
+        &mut self, 
+        token_series_id: TokenSeriesId, 
+        receiver_id: ValidAccountId
+    ) -> TokenId {
+        let initial_storage_usage = env::storage_usage();
+        let mut token_id: TokenId =  "-".to_string();
+        match token_series_id.split(TOKEN_DELIMETER).collect::<Vec<&str>>().len() {
+            1=> {
+                    let token_series = self.token_series_by_id.get(&token_series_id).expect("Token series not exist");
+                    let price: u128 = token_series.price.expect("not for sale");
+                    let attached_deposit = env::attached_deposit();
+                    assert!(
+                        attached_deposit >= price,
+                        "attached deposit is less than price : {}",
+                        price
+                    );
+
+                    let mut profile = self.profile.get(&token_series.creator_id).expect("Profile does not exist");
+                    profile.sales = profile.sales + 1;
+                    self.profile.insert(&token_series.creator_id, &profile);
+
+                    // self.transaction_add(token_series_id.clone(), receiver_id.to_string(), price);
+
+                    token_id = self._nft_mint_series(token_series_id, receiver_id.to_string());
+
+                    
+            
+                    let for_vault = price as u128 * VAULT_FEE / 10_000u128;
+                    let price_deducted = price - for_vault;
+                    Promise::new(token_series.creator_id).transfer(price_deducted);
+                    Promise::new(self.vault_id.clone()).transfer(for_vault);
+            
+                    refund_deposit(env::storage_usage() - initial_storage_usage, price);
+            
+                },
+            2=> {
+                    let token_data = self.marketplace.get(&token_series_id).expect("Token not for sale");
+                    let price: u128 = token_data.price;
+                    let attached_deposit = env::attached_deposit();
+                    assert!(
+                        attached_deposit >= price,
+                        "attached deposit is less than price : {}",
+                        price
+                    );
+
+                    let mut profile = self.profile.get(&token_data.owner_id).expect("Profile does not exist");
+                    profile.sales = profile.sales + 1;
+                    self.profile.insert(&token_data.owner_id, &profile);
+
+                    // self.transaction_add(token_series_id.clone(), receiver_id.to_string(), price);
+                    
+                    self.tokens.nft_transfer(receiver_id.clone(), token_series_id.clone(), None, None);
+
+                    let for_vault = price as u128 * VAULT_FEE / 10_000u128;
+                    let price_deducted = price - for_vault;
+                    Promise::new(token_data.owner_id).transfer(price_deducted);
+                    Promise::new(self.vault_id.clone()).transfer(for_vault);
+            
+                    refund_deposit(env::storage_usage() - initial_storage_usage, price);
+                    
+                    token_id = token_series_id.to_string().clone();
+                            
+                },
+            _=> env::panic(b"token_series_id invalid"),
+        };
+
+        token_id
+    }
+
+
+    fn _nft_mint_series(
+        &mut self, 
+        token_series_id: TokenSeriesId, 
+        receiver_id: AccountId
+    ) -> TokenId {
         let mut token_series = self.token_series_by_id.get(&token_series_id).expect("Token series not exist");
+        let metadata: TokenMetadata = token_series.metadata.clone();
         assert!(
             token_series.is_mintable,
             "Token series is not mintable"
@@ -371,15 +691,17 @@ impl Contract {
 
         if (num_tokens + 1) >= max_copies {
             token_series.is_mintable = false;
+            token_series.price = None;
         }
-
+        
         let token_id = format!("{}{}{}", &token_series_id, TOKEN_DELIMETER, num_tokens + 1);
         token_series.tokens.insert(&token_id);
         self.token_series_by_id.insert(&token_series_id, &token_series);
-
-   
+        let title: String = format!("{} {} {}", token_series.metadata.title.unwrap().clone(), TITLE_DELIMETER, (num_tokens + 1).to_string());
+        
+        /*
         let metadata = Some(TokenMetadata {
-            title: token_series.metadata.title.clone(),          
+            title: Some(title),          
             description: token_series.metadata.description.clone(),   
             media: token_series.metadata.media.clone(),
             media_hash: None, 
@@ -389,17 +711,17 @@ impl Contract {
             starts_at: None, 
             updated_at: None, 
             extra: None, 
-            reference: None,
+            reference: token_series.metadata.reference.clone(),
             reference_hash: None, 
-        });
+        });*/
 
-        let owner_id: AccountId = receiver_id.to_string();
+        let owner_id: AccountId = receiver_id;
         self.tokens.owner_by_id.insert(&token_id, &owner_id);
 
         self.tokens
             .token_metadata_by_id
             .as_mut()
-            .and_then(|by_id| by_id.insert(&token_id, &metadata.as_ref().unwrap()));
+            .and_then(|by_id| by_id.insert(&token_id, &metadata));
 
          if let Some(tokens_per_owner) = &mut self.tokens.tokens_per_owner {
              let mut token_ids = tokens_per_owner.get(&owner_id).unwrap_or_else(|| {
@@ -409,73 +731,118 @@ impl Contract {
              });
              token_ids.insert(&token_id);
              tokens_per_owner.insert(&owner_id, &token_ids);
-         }
-
-        refund_deposit(env::storage_usage() - initial_storage_usage);
+         };
 
         token_id
     }
 
+    fn transaction_add(&mut self, token_id: TokenSeriesId, 
+        owner_id: AccountId,
+        price: Balance
+    ) -> bool {
+        let mut result = false;
+        self.token_series_by_id.get(&token_id).expect("Token series not exist");
+        let mut sales = 0;
+        let mut final_price: u128 = "0".parse::<u128>().unwrap();
 
-    #[payable]
-    pub fn put_nft_series_price(&mut self, token_series_id: TokenSeriesId
-        , price: Option<U128>
-    ) -> Option<U128> {
-        assert_one_yocto();
+        if price > 0 {
+            final_price = price;
+            sales = 1;
+        };
 
-        let mut token_series = self.token_series_by_id.get(&token_series_id).expect("Token series not exist");
-        assert_eq!(
-            env::predecessor_account_id(),
-            token_series.creator_id,
-            "Creator only"
-        );
 
-        let token_metadata = token_series.metadata.clone();
-        let caller_id = token_series.creator_id.clone();
-        let royalty_res = token_series.royalty.clone();
-
-        assert_eq!(
-            token_series.is_mintable,
-            true,
-            "token series is not mintable"
-        );
-
-        if price.is_none() {
-            if self.marketplace.get(&token_series_id).is_some() {
-                self.marketplace.remove(&token_series_id);
+        if self.transaction.get(&token_id).is_some() {
+            let mut trans = self.transaction.get(&token_id).expect("Token series not exist");
+            trans.operations = trans.operations + 1;
+            if price > 0 {
+                trans.sales = trans.sales + 1;
             };
-            token_series.price = None;
-        } else {
-            assert!(
-                price.unwrap().0 < MAX_PRICE,
-                "price higher than {}",
-                MAX_PRICE
-            );
-            
-            if self.marketplace.get(&token_series_id).is_some() {
-                let mut market = self.marketplace.get(&token_series_id).expect("error");
-                market.price = price.unwrap().0;
-                self.marketplace.insert(&token_series_id, &market);
-            } else {
-                self.marketplace.insert(&token_series_id, &MarketJson {
-                    metadata: token_metadata.clone(),
-                    creator_id: caller_id.to_string(),
-                    price: price.unwrap().0,
-                    category: None,
-                    royalty: royalty_res.clone(),
-                });
-            };
-            token_series.price = Some(price.unwrap().0);
-        }
-
-        self.token_series_by_id.insert(&token_series_id, &token_series);
-        
-        price
+            trans.operation_history.push(OperationHistory {
+                owner_id: owner_id.to_string(),
+                price: final_price,
+                date: env::block_timestamp().to_string().parse::<u64>().unwrap(),
+            });
+            self.transaction.insert(&token_id, &trans);
+            result = true;
+         } else {
+            self.transaction.insert(&token_id, &TransactionJson {
+                token_id: token_id.clone(),
+                operations: 1,
+                sales: sales,
+                operation_history: vec![OperationHistory {
+                    owner_id: owner_id.to_string(),
+                    price: final_price,
+                    date: env::block_timestamp().to_string().parse::<u64>().unwrap(),
+                }],
+            }); 
+            result = true;
+         };
+         result
     }
-
     
 
+    #[payable]
+    pub fn set_review(
+        &mut self, 
+        review: String, 
+        critics: i8,
+        token_id: TokenSeriesId
+    ) -> Review {
+        let token = token_id.split(TOKEN_DELIMETER).collect::<Vec<&str>>();
+        let user_id = env::signer_account_id();
+        if token.len() == 2 {
+            let mut token_series = self.token_series_by_id.get(&token[0].to_string()).expect("Token series not exist");
+            let owner_id = self.tokens.owner_by_id.get(&token_id.clone()).expect("Token not exist");
+            assert!(owner_id == user_id.clone(), "You must own a token from this series to be able to leave a review");
+            
+            let data = Review {
+                user_id: user_id.clone(),
+                review: review.to_string(),
+                critics: critics,
+            };
+
+            token_series.reviews.insert(&data);
+
+            self.token_series_by_id.insert(&token[0].to_string(), &token_series);
+
+            env::log(b"Review is created");
+
+            data
+
+        } else {
+            env::panic(b"Token id invalid");
+        }
+    }
+
+
     // views
+    pub fn get_market(&self,
+        from_index: Option<U128>,
+        limit: Option<u64>) -> Vec<MarketView> {
+            
+            let start_index: u128 = from_index.map(From::from).unwrap_or_default();
+            assert!(
+                (self.marketplace.len() as u128) > start_index,
+                "Out of bounds, please use a smaller from_index."
+            );
+            let limit = limit.map(|v| v as usize).unwrap_or(usize::MAX);
+            assert_ne!(limit, 0, "Cannot provide limit of 0.");
+
+            self.marketplace.iter()
+            .skip(start_index as usize)
+            .take(limit)
+            .map(|(k, s)| MarketView {
+            token_series_id: k.to_string(),
+            metadata: s.metadata,
+            owner_id: s.owner_id,
+            creator_id: s.creator_id,
+            price: s.price,
+            category: s.category,
+            royalty: s.royalty,
+            reviews: self.nft_review(k.to_string()),
+        }).collect()
+    }
+
     pub fn get_nft_series_single(&self, token_series_id: TokenSeriesId) -> TokenSeriesJson {
 		let token_series = self.token_series_by_id.get(&token_series_id).expect("Series does not exist");
 		TokenSeriesJson{
@@ -485,6 +852,72 @@ impl Contract {
             royalty: token_series.royalty,
 		}
 	}
+
+    pub fn get_market_category(&self, category: i128,
+        from_index: Option<U128>,
+        limit: Option<u64>) -> Vec<MarketView> {
+            
+            let start_index: u128 = from_index.map(From::from).unwrap_or_default();
+            assert!(
+                (self.marketplace.len() as u128) > start_index,
+                "Out of bounds, please use a smaller from_index."
+            );
+            let limit = limit.map(|v| v as usize).unwrap_or(usize::MAX);
+            assert_ne!(limit, 0, "Cannot provide limit of 0.");
+
+            self.marketplace.iter().filter(|(_k, s)| s.category.get(&category).is_some())
+            .skip(start_index as usize)
+            .take(limit)
+            .map(|(k, s)| MarketView {
+            token_series_id: k.to_string(),
+            metadata: s.metadata,
+            owner_id: s.owner_id,
+            creator_id: s.creator_id,
+            price: s.price,
+            category: s.category,
+            royalty: s.royalty,
+            reviews: self.nft_review(k.to_string()),
+        }).collect()
+    }
+
+
+    pub fn nft_review(&self, token_id: TokenId) -> Vec<Review> {
+        let mut token: String = "".to_string();
+        match token_id.split(TOKEN_DELIMETER).collect::<Vec<&str>>().len() {
+            1=> {
+                    token = token_id;
+                },
+            2=> {
+                    token = token_id.split(TOKEN_DELIMETER).collect::<Vec<&str>>()[0].to_string();
+                },
+            _=> env::panic(b"token_series_id invalid"),
+        };
+
+        let mut token_series = self.token_series_by_id.get(&token).expect("Token series not exist");
+
+        token_series.reviews.iter()
+        .map(|x| Review {
+            user_id: x.user_id.to_string(),
+            review: x.review.to_string(),
+            critics: x.critics,
+        }).collect()
+    }
+
+
+    pub fn get_Best_sellers(&self) -> Vec<ProfileJson> {
+        self.profile.iter().filter(|(_k, s)| s.sales > 0)
+        .map(|(k, s)| ProfileJson {
+            user_id: k.to_string(),
+            name: s.name.unwrap(),
+            last_name: s.last_name.unwrap(),
+            pen_name: s.pen_name.unwrap(),
+            bio: s.bio.unwrap(),
+            website: s.website.unwrap(),
+            twitter: s.twitter.unwrap(),
+            sales: s.sales,
+        }).collect()
+    }
+
 
     pub fn get_nft_series(
         &self,
@@ -535,6 +968,62 @@ impl Contract {
             .collect()
     }
 
+
+    pub fn get_nft_series_creator(
+        &self,
+        creator_id: AccountId,
+        from_index: Option<U128>,
+        limit: Option<u64>,
+    ) -> Vec<TokenSeriesJson> {
+        let start_index: u128 = from_index.map(From::from).unwrap_or_default();
+        assert!(
+            (self.token_series_by_id.len() as u128) > start_index,
+            "Out of bounds, please use a smaller from_index."
+        );
+        let limit = limit.map(|v| v as usize).unwrap_or(usize::MAX);
+        assert_ne!(limit, 0, "Cannot provide limit of 0.");
+
+        self.token_series_by_id
+            .iter().filter(|(_k, s)| s.creator_id == creator_id)
+            .skip(start_index as usize)
+            .take(limit)
+            .map(|(token_series_id, token_series)| TokenSeriesJson{
+                token_series_id,
+                metadata: token_series.metadata,
+                creator_id: token_series.creator_id,
+                royalty: token_series.royalty,
+            })
+            .collect()
+    }
+
+    pub fn get_nft_series_category(
+        &self,
+        creator_id: AccountId,
+        category: i128,
+        from_index: Option<U128>,
+        limit: Option<u64>,
+    ) -> Vec<TokenSeriesJson> {
+        let start_index: u128 = from_index.map(From::from).unwrap_or_default();
+        assert!(
+            (self.token_series_by_id.len() as u128) > start_index,
+            "Out of bounds, please use a smaller from_index."
+        );
+        let limit = limit.map(|v| v as usize).unwrap_or(usize::MAX);
+        assert_ne!(limit, 0, "Cannot provide limit of 0.");
+
+        self.token_series_by_id
+            .iter().filter(|(_k, s)| s.category.get(&category).is_some())
+            .skip(start_index as usize)
+            .take(limit)
+            .map(|(token_series_id, token_series)| TokenSeriesJson{
+                token_series_id,
+                metadata: token_series.metadata,
+                creator_id: token_series.creator_id,
+                royalty: token_series.royalty,
+            })
+            .collect()
+    }
+
     pub fn nft_token(&self, token_id: TokenId) -> Option<Token> {
         let owner_id = self.tokens.owner_by_id.get(&token_id)?;
         let approved_account_ids = self
@@ -578,6 +1067,22 @@ near_contract_standards::impl_non_fungible_token_enumeration!(Contract, tokens);
 impl NonFungibleTokenMetadataProvider for Contract {
     fn nft_metadata(&self) -> NFTContractMetadata {
         self.metadata.get().unwrap()
+    }
+}
+
+fn refund_deposit(storage_used: u64, extra_spend: Balance) {
+    let required_cost = env::storage_byte_cost() * Balance::from(storage_used);
+    let attached_deposit = env::attached_deposit() - extra_spend;
+
+    assert!(
+        required_cost <= attached_deposit,
+        "Must attach {} yoctoNEAR to cover storage",
+        required_cost,
+    );
+
+    let refund = attached_deposit - required_cost;
+    if refund > 1 {
+        Promise::new(env::predecessor_account_id()).transfer(refund);
     }
 }
 
