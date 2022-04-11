@@ -1,6 +1,9 @@
 
-use near_contract_standards::non_fungible_token::core::{
+/* use near_contract_standards::non_fungible_token::core::{
     NonFungibleTokenCore, NonFungibleTokenResolver,
+}; */
+use near_contract_standards::non_fungible_token::core::{
+    NonFungibleTokenCore
 };
 use near_contract_standards::non_fungible_token::metadata::{
     NFTContractMetadata, NonFungibleTokenMetadataProvider, TokenMetadata, NFT_METADATA_SPEC,
@@ -12,9 +15,9 @@ use near_contract_standards::non_fungible_token::{Token, TokenId};
 use near_sdk::borsh::{self, BorshDeserialize, BorshSerialize};
 use near_sdk::json_types::ValidAccountId;
 use near_sdk::{
-    env, near_bindgen, AccountId, BorshStorageKey, PanicOnDefault, Promise, PromiseOrValue, Balance,
+    env, near_bindgen, AccountId, BorshStorageKey, PanicOnDefault, Promise, Balance,
     serde_json::json, assert_one_yocto,
-};
+}; /* PromiseOrValue, */
 use near_sdk::collections::{LazyOption, UnorderedMap, UnorderedSet};
 
 use serde::Serialize;
@@ -45,7 +48,7 @@ const NO_DEPOSIT: Balance = 0;
 */
 
 
-#[derive(BorshDeserialize, BorshSerialize, Serialize, Deserialize)]
+#[derive(BorshDeserialize, BorshSerialize, Serialize, Deserialize, Clone)]
 #[serde(crate = "near_sdk::serde")]
 pub struct ProfileObjects {
     name: Option<String>,
@@ -55,6 +58,7 @@ pub struct ProfileObjects {
     website: Option<String>,
     twitter: Option<String>,
     sales: i128,
+    avatar: Option<String>,
 }
 
 
@@ -69,6 +73,7 @@ pub struct ProfileJson {
     website: String,
     twitter: String,
     sales: i128,
+    avatar: String,
 }
 
 
@@ -79,12 +84,33 @@ pub struct CategoriesObjet {
     img: String,
 }
 
-#[derive(Serialize, Deserialize, BorshDeserialize, BorshSerialize)]
+#[derive(Serialize, Deserialize, BorshDeserialize, BorshSerialize, Clone)]
 #[serde(crate = "near_sdk::serde")]
 pub struct CategoriesJson {
     id: i128,
 	name: String,
     img: String,
+}
+
+#[derive(BorshDeserialize, BorshSerialize)]
+pub struct TokenSeries {
+	metadata: TokenMetadata,
+	creator_id: AccountId,
+	tokens: UnorderedSet<TokenId>,
+    price: Option<Balance>,
+    is_mintable: bool,
+    category: HashMap<i128, CategoriesObjet>,
+    royalty: HashMap<AccountId, u32>,
+    reviews: UnorderedSet<Review>,
+}
+
+#[derive(BorshDeserialize, BorshSerialize, Serialize, Deserialize)]
+#[serde(crate = "near_sdk::serde")]
+pub struct TokenSeriesJson {
+    token_series_id: TokenSeriesId,
+	metadata: TokenMetadata,
+	creator_id: AccountId,
+    royalty: HashMap<AccountId, u32>
 }
 
 #[derive(BorshDeserialize, BorshSerialize, Serialize, Deserialize)]
@@ -99,7 +125,7 @@ pub struct MarketJson {
     royalty: HashMap<AccountId, u32>,
 }
 
-#[derive(BorshDeserialize, BorshSerialize, Serialize, Deserialize)]
+#[derive(Serialize, Deserialize)]
 #[serde(crate = "near_sdk::serde")]
 pub struct MarketView {
     token_series_id: TokenSeriesId,
@@ -109,9 +135,17 @@ pub struct MarketView {
     price: Balance,
     category: HashMap<i128, CategoriesObjet>,
     royalty: HashMap<AccountId, u32>,
+    copy: i64,
     reviews: Vec<Review>,
 }
 
+#[derive(BorshDeserialize, BorshSerialize, Serialize, Deserialize)]
+#[serde(crate = "near_sdk::serde")]
+pub struct OperationHistory {
+    owner_id: AccountId,
+    price: Balance,
+    date: String,
+}
 
 #[derive(BorshDeserialize, BorshSerialize, Serialize, Deserialize)]
 #[serde(crate = "near_sdk::serde")]
@@ -122,30 +156,28 @@ pub struct TransactionJson {
     operation_history: Vec<OperationHistory>,
 }
 
+#[derive(BorshDeserialize, BorshSerialize, Serialize, Deserialize)]
+#[serde(crate = "near_sdk::serde")]
+pub struct TransactionSeries {
+    token_serie_id: TokenSeriesId,
+    operations: i128,
+    sales: i128,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(crate = "near_sdk::serde")]
+pub struct TransactionSeriesView {
+    token_serie_id: TokenSeriesId,
+    creator_id: String,
+    metadata: TokenMetadata,
+    price: Option<Balance>,
+    operations: i128,
+    sales: i128,
+}
+
 
 #[derive(BorshDeserialize, BorshSerialize, Serialize, Deserialize)]
 #[serde(crate = "near_sdk::serde")]
-pub struct OperationHistory {
-    owner_id: AccountId,
-    price: Balance,
-    date: u64,
-}
-
-
-#[derive(BorshDeserialize, BorshSerialize)]
-pub struct TokenSeries {
-	metadata: TokenMetadata,
-	creator_id: AccountId,
-	tokens: UnorderedSet<TokenId>,
-    price: Option<Balance>,
-    is_mintable: bool,
-    category: HashMap<i128, CategoriesObjet>,
-    royalty: HashMap<AccountId, u32>,
-    reviews: UnorderedSet<Review>,
-}
-
-
-#[derive(BorshDeserialize, BorshSerialize, Serialize, Deserialize)]
 pub struct Review {
     user_id: AccountId,
     review: String,
@@ -153,14 +185,13 @@ pub struct Review {
 }
 
 
-#[derive(BorshDeserialize, BorshSerialize, Serialize, Deserialize)]
+#[derive(Serialize, Deserialize)]
 #[serde(crate = "near_sdk::serde")]
-pub struct TokenSeriesJson {
-    token_series_id: TokenSeriesId,
-	metadata: TokenMetadata,
-	creator_id: AccountId,
-    royalty: HashMap<AccountId, u32>
+pub struct AuthorSales {
+    author_id: String,
+    sales: i128,
 }
+
 
 
 #[near_bindgen]
@@ -172,10 +203,11 @@ pub struct Contract {
     token_series_by_id: UnorderedMap<TokenSeriesId, TokenSeries>,
     vault_id: AccountId,
     profile: UnorderedMap<AccountId, ProfileObjects>,
-    categories: UnorderedMap<i128, CategoriesObjet>,
+    categories: Vec<CategoriesJson>,
     marketplace: UnorderedMap<TokenSeriesId, MarketJson>,
     transaction: UnorderedMap<TokenSeriesId, TransactionJson>,
     administrators: Vec<AccountId>,
+    transaction_series: UnorderedMap<TokenSeriesId, TransactionSeries>, 
 }
 
 const DATA_IMAGE_SVG_NEAR_ICON: &str = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 288 288'%3E%3Cg id='l' data-name='l'%3E%3Cpath d='M187.58,79.81l-30.1,44.69a3.2,3.2,0,0,0,4.75,4.2L191.86,103a1.2,1.2,0,0,1,2,.91v80.46a1.2,1.2,0,0,1-2.12.77L102.18,77.93A15.35,15.35,0,0,0,90.47,72.5H87.34A15.34,15.34,0,0,0,72,87.84V201.16A15.34,15.34,0,0,0,87.34,216.5h0a15.35,15.35,0,0,0,13.08-7.31l30.1-44.69a3.2,3.2,0,0,0-4.75-4.2L96.14,186a1.2,1.2,0,0,1-2-.91V104.61a1.2,1.2,0,0,1,2.12-.77l89.55,107.23a15.35,15.35,0,0,0,11.71,5.43h3.13A15.34,15.34,0,0,0,216,201.16V87.84A15.34,15.34,0,0,0,200.66,72.5h0A15.35,15.35,0,0,0,187.58,79.81Z'/%3E%3C/g%3E%3C/svg%3E";
@@ -192,6 +224,8 @@ enum StorageKey {
     TokenSeriesById,
     TokensBySeriesInner { token_series: String },
     TokensPerOwner { account_hash: Vec<u8> },
+    Transaction,
+    TransactionSeries,
 }
 
 #[near_bindgen]
@@ -229,11 +263,33 @@ impl Contract {
             metadata: LazyOption::new(StorageKey::Metadata, Some(&metadata)),
             vault_id: vault_id.to_string(),
             profile: UnorderedMap::new(b"s".to_vec()),
-            categories: UnorderedMap::new(b"s".to_vec()),
+            categories: Vec::new(),
             marketplace: UnorderedMap::new(b"0".to_vec()),
-            transaction: UnorderedMap::new(b"s".to_vec()),
-            administrators: vec!["bookshop.testnet".to_string(), "book.bookshop.testnet".to_string()],
+            transaction: UnorderedMap::new(StorageKey::Transaction),
+            administrators: vec![
+                                    "bookshop.testnet".to_string(),
+                                    "book4.bookshop.testnet".to_string(),
+                                    "vicious2403.testnet".to_string(),
+                                    "bookshop2.testnet".to_string(),
+                                    "book.bookshop2.testnet".to_string(),
+                                ],
+            transaction_series: UnorderedMap::new(StorageKey::TransactionSeries),
         }
+    }
+
+    pub fn set_admin(&mut self, user_id: AccountId) {      
+        self.administrators.iter().find(|&x| x == &env::signer_account_id()).expect("Only administrators can set categories");
+        let valid = self.administrators.iter().find(|&x| x == &user_id);
+        if valid.is_some() {
+            env::panic(b"the user is already in the list of administrators");
+        }
+        self.administrators.push(user_id);
+    }
+
+    pub fn delete_admin(&mut self, user_id: AccountId) {      
+        self.administrators.iter().find(|&x| x == &env::signer_account_id()).expect("Only administrators can set categories");
+        let index = self.administrators.iter().position(|x| x == &user_id.to_string()).expect("the user is not in the list of administrators");
+        self.administrators.remove(index);
     }
 
     pub fn set_profile(&mut self, name: Option<String>,
@@ -241,7 +297,8 @@ impl Contract {
         pen_name: Option<String>,
         bio: Option<String>,
         website: Option<String>,
-        twitter: Option<String>
+        twitter: Option<String>,
+        avatar: Option<String>
     ) -> ProfileObjects {
         let profile = self.profile.get(&env::signer_account_id());
         if profile.is_some() {
@@ -256,6 +313,7 @@ impl Contract {
             website: website,
             twitter: twitter,
             sales: 0,
+            avatar: avatar,
         };
 
         self.profile.insert(&env::signer_account_id(), &data);
@@ -268,7 +326,8 @@ impl Contract {
         pen_name: Option<String>,
         bio: Option<String>,
         website: Option<String>,
-        twitter: Option<String>
+        twitter: Option<String>,
+        avatar: Option<String>
     ) -> ProfileObjects {
         let mut return_data = ProfileObjects {
             name: name.clone(),
@@ -278,6 +337,7 @@ impl Contract {
             website: website.clone(),
             twitter: twitter.clone(),
             sales: 0,
+            avatar: avatar.clone(),
         };
         let mut profile = self.profile.get(&env::signer_account_id()).expect("Profile does not exist");
         profile.name = name;
@@ -286,6 +346,7 @@ impl Contract {
         profile.bio = bio;
         profile.website = website;
         profile.twitter = twitter;
+        profile.avatar = avatar;
 
         let sales = profile.sales.clone();
         return_data.sales = sales;
@@ -309,34 +370,30 @@ impl Contract {
             website: profile.website,
             twitter: profile.twitter,
             sales: profile.sales,
+            avatar: profile.avatar,
         }
 	}
 
     pub fn set_category(&mut self, name: String, img: String) -> CategoriesJson {      
         self.administrators.iter().find(|&x| x == &env::signer_account_id()).expect("Only administrators can set categories");
         let category_id: i128 = (self.categories.len() + 1) as i128;
-        let return_data = CategoriesJson {
+        let data = CategoriesJson {
             id: category_id,
             name: name.to_string(),
             img: img.to_string(),
         };
-        let data: CategoriesObjet = CategoriesObjet {
-            name: name,
-            img: img,
-        };
-        self.categories.insert(&category_id, &data);
+        
+        self.categories.push(data.clone());
         env::log(b"category Created");
         
-        return_data
+        data
     }
 
     pub fn put_category(&mut self, category_id: i128, name: String, img: String) -> CategoriesJson {
         self.administrators.iter().find(|&x| x == &env::signer_account_id()).expect("Only admins can edit categories");
-        let mut categories = self.categories.get(&category_id).expect("Category does not exist");
-        categories.name = name.to_string();
-        categories.img = img.to_string();
-
-        self.categories.insert(&category_id, &categories);
+        let index = self.categories.iter().position(|x| x.id == category_id).expect("Category does not exist");
+        self.categories[index].name = name.to_string();
+        self.categories[index].img = img.to_string();
 
         env::log(b"Category Update");
 
@@ -348,17 +405,13 @@ impl Contract {
     }
 
     pub fn get_category(&self, category_id: Option<i128>) -> Vec<CategoriesJson> {
-        let mut categories = self.categories.iter().map(|(k, s)| CategoriesJson {
-            id: k,
-            name: s.name.to_string(),
-            img: s.img.to_string(),
-        }).collect();
+        let mut categories = self.categories.clone();
 
         if category_id.is_some() {
-            categories = self.categories.iter().filter(|(k, _s)| k == &category_id.unwrap()).map(|(k, s)| CategoriesJson {
-                id: k,
-                name: s.name.to_string(),
-                img: s.img.to_string(),
+            categories = self.categories.iter().filter(|x| x.id == category_id.unwrap()).map(|x| CategoriesJson {
+                id: x.id,
+                name: x.name.to_string(),
+                img: x.img.to_string(),
             }).collect();
         }
         categories
@@ -420,14 +473,14 @@ impl Contract {
             None
         };
 
-        let category_res: Vec<i128> = category.clone();
+        //let category_res: Vec<i128> = category.clone();
         let mut categorys: HashMap<i128, CategoriesObjet> = HashMap::new();
         
-        category_res.iter().map(|x| {
-            let category = self.categories.get(x).expect("Category does not exist");
+        category.iter().for_each(|x| {
+            let index = self.categories.iter().position(|z| z.id == *x).expect("Category does not exist");
             categorys.insert(*x, CategoriesObjet {
-                name: category.name.clone(),
-                img: category.img.clone(),
+                name: self.categories[index].name.clone(),
+                img: self.categories[index].img.clone(),
             });
         });
 
@@ -503,7 +556,7 @@ impl Contract {
         let token_id: TokenId = self._nft_mint_series(token_series_id, receiver_id.to_string());
         
         
-        // self.transaction_add(token, receiver_id.to_string(), 0);
+        self.transaction_add(token_id.clone(), receiver_id.to_string(), 0);
 
 
         refund_deposit(env::storage_usage() - initial_storage_usage, 0);
@@ -620,15 +673,13 @@ impl Contract {
                         price
                     );
 
-                    let mut profile = self.profile.get(&token_series.creator_id).expect("Profile does not exist");
+                    let mut profile = self.profile.get(&token_series.creator_id.clone()).expect("Profile does not exist");
                     profile.sales = profile.sales + 1;
-                    self.profile.insert(&token_series.creator_id, &profile);
-
-                    // self.transaction_add(token_series_id.clone(), receiver_id.to_string(), price);
+                    self.profile.insert(&token_series.creator_id.clone(), &profile);
 
                     token_id = self._nft_mint_series(token_series_id, receiver_id.to_string());
 
-                    
+                    self.transaction_add(token_id.clone(), receiver_id.clone().to_string(), price);
             
                     let for_vault = price as u128 * VAULT_FEE / 10_000u128;
                     let price_deducted = price - for_vault;
@@ -652,7 +703,7 @@ impl Contract {
                     profile.sales = profile.sales + 1;
                     self.profile.insert(&token_data.owner_id, &profile);
 
-                    // self.transaction_add(token_series_id.clone(), receiver_id.to_string(), price);
+                    self.transaction_add(token_series_id.clone(), receiver_id.to_string(), price);
                     
                     self.tokens.nft_transfer(receiver_id.clone(), token_series_id.clone(), None, None);
 
@@ -679,7 +730,7 @@ impl Contract {
         receiver_id: AccountId
     ) -> TokenId {
         let mut token_series = self.token_series_by_id.get(&token_series_id).expect("Token series not exist");
-        let metadata: TokenMetadata = token_series.metadata.clone();
+        // let metadata: TokenMetadata = token_series.metadata.clone();
         assert!(
             token_series.is_mintable,
             "Token series is not mintable"
@@ -692,28 +743,29 @@ impl Contract {
         if (num_tokens + 1) >= max_copies {
             token_series.is_mintable = false;
             token_series.price = None;
+            self.marketplace.remove(&token_series_id);
         }
         
         let token_id = format!("{}{}{}", &token_series_id, TOKEN_DELIMETER, num_tokens + 1);
         token_series.tokens.insert(&token_id);
         self.token_series_by_id.insert(&token_series_id, &token_series);
-        let title: String = format!("{} {} {}", token_series.metadata.title.unwrap().clone(), TITLE_DELIMETER, (num_tokens + 1).to_string());
+        let title: String = format!("{}{}{}{}{}", token_series.metadata.title.unwrap().clone(), TITLE_DELIMETER, &token_series_id, TITLE_DELIMETER, (num_tokens + 1).to_string());
         
-        /*
-        let metadata = Some(TokenMetadata {
+        
+        let metadata = TokenMetadata {
             title: Some(title),          
             description: token_series.metadata.description.clone(),   
             media: token_series.metadata.media.clone(),
-            media_hash: None, 
-            copies: None, 
+            media_hash: token_series.metadata.media_hash, 
+            copies: token_series.metadata.copies, 
             issued_at: Some(env::block_timestamp().to_string()), 
-            expires_at: None, 
-            starts_at: None, 
-            updated_at: None, 
-            extra: None, 
+            expires_at: token_series.metadata.expires_at,
+            starts_at: token_series.metadata.starts_at, 
+            updated_at: token_series.metadata.updated_at,
+            extra: token_series.metadata.extra.clone(),
             reference: token_series.metadata.reference.clone(),
-            reference_hash: None, 
-        });*/
+            reference_hash: token_series.metadata.reference_hash,
+        };
 
         let owner_id: AccountId = receiver_id;
         self.tokens.owner_by_id.insert(&token_id, &owner_id);
@@ -735,13 +787,12 @@ impl Contract {
 
         token_id
     }
+    
 
     fn transaction_add(&mut self, token_id: TokenSeriesId, 
         owner_id: AccountId,
         price: Balance
     ) -> bool {
-        let mut result = false;
-        self.token_series_by_id.get(&token_id).expect("Token series not exist");
         let mut sales = 0;
         let mut final_price: u128 = "0".parse::<u128>().unwrap();
 
@@ -750,8 +801,27 @@ impl Contract {
             sales = 1;
         };
 
+        
+        let token: TokenSeriesId = token_id.split(TOKEN_DELIMETER).collect::<Vec<&str>>()[0].to_string();
+        self.token_series_by_id.get(&token).expect("Token series not exist");
+        if self.transaction_series.get(&token).is_some() {
+            let mut serie_transaction = self.transaction_series.get(&token).expect("Token series not exist");
+            serie_transaction.operations = serie_transaction.operations + 1;
+            if price > 0 {
+                serie_transaction.sales = serie_transaction.sales + 1;
+            }
+            self.transaction_series.insert(&token, &serie_transaction);
+        } else {
+            self.transaction_series.insert(&token, &TransactionSeries {
+                token_serie_id: token.to_string(),
+                operations: 1,
+                sales: sales,
+            });
+        };
+        
 
         if self.transaction.get(&token_id).is_some() {
+            env::log(b"update transaction");
             let mut trans = self.transaction.get(&token_id).expect("Token series not exist");
             trans.operations = trans.operations + 1;
             if price > 0 {
@@ -760,24 +830,26 @@ impl Contract {
             trans.operation_history.push(OperationHistory {
                 owner_id: owner_id.to_string(),
                 price: final_price,
-                date: env::block_timestamp().to_string().parse::<u64>().unwrap(),
+                date: env::block_timestamp().to_string(),
             });
             self.transaction.insert(&token_id, &trans);
-            result = true;
+            true;
          } else {
-            self.transaction.insert(&token_id, &TransactionJson {
+            env::log(b"insert transaction");
+            let data = TransactionJson {
                 token_id: token_id.clone(),
                 operations: 1,
                 sales: sales,
                 operation_history: vec![OperationHistory {
                     owner_id: owner_id.to_string(),
                     price: final_price,
-                    date: env::block_timestamp().to_string().parse::<u64>().unwrap(),
+                    date: env::block_timestamp().to_string(),
                 }],
-            }); 
-            result = true;
+            };
+            self.transaction.insert(&token_id, &data); 
+            true;
          };
-         result
+         false
     }
     
 
@@ -790,6 +862,7 @@ impl Contract {
     ) -> Review {
         let token = token_id.split(TOKEN_DELIMETER).collect::<Vec<&str>>();
         let user_id = env::signer_account_id();
+
         if token.len() == 2 {
             let mut token_series = self.token_series_by_id.get(&token[0].to_string()).expect("Token series not exist");
             let owner_id = self.tokens.owner_by_id.get(&token_id.clone()).expect("Token not exist");
@@ -816,7 +889,67 @@ impl Contract {
 
 
     // views
+    pub fn get_top_author_sales(&self, top: Option<i8>) -> Vec<AuthorSales> {
+        let top_limit = top.unwrap_or(10);
+
+        let mut top_authors: Vec<AuthorSales> = self.profile.iter().filter(|(_k, v)| v.sales > 0)
+                                                .map(|(k, v)| AuthorSales {author_id: k, sales: v.sales}).collect::<Vec<AuthorSales>>();
+        top_authors.sort_by(|a, b| b.sales.cmp(&a.sales));
+
+        top_authors.iter()
+        .take(top_limit as usize)
+        .map(|x| AuthorSales {
+            author_id: x.author_id.to_string(),
+            sales: x.sales,
+        }).collect::<Vec<AuthorSales>>()
+    }
+
+
+    pub fn get_top_series_sales(&self, top: Option<i8>) -> Vec<TransactionSeriesView> {
+        let top_limit = top.unwrap_or(10);
+
+        let mut top_series: Vec<TransactionSeries> = self.transaction_series.iter().filter(|(_k, v)| v.sales > 0)
+                                                .map(|(k, v)| TransactionSeries {
+                                                    token_serie_id: k.to_string(),
+                                                    operations: v.operations,
+                                                    sales: v.sales,
+                                                }).collect::<Vec<TransactionSeries>>();
+        top_series.sort_by(|a, b| b.sales.cmp(&a.sales));
+        
+        top_series.iter()
+        .take(top_limit as usize)
+        .map(|x| TransactionSeriesView {
+            token_serie_id: x.token_serie_id.to_string(),
+            creator_id: self.token_series_by_id.get(&x.token_serie_id.to_string()).unwrap().creator_id.to_string(),
+            metadata: self.token_series_by_id.get(&x.token_serie_id.to_string()).unwrap().metadata.clone(),
+            price: self.token_series_by_id.get(&x.token_serie_id.to_string()).unwrap().price,
+            operations: x.operations,
+            sales: x.sales,
+        }).collect::<Vec<TransactionSeriesView>>()
+    }
+
+
+    pub fn get_author_market(&self) -> Vec<AccountId> {
+		self.profile.iter().filter(|(k, _v)| self.marketplace.iter().find(|(_k2, s2)| s2.creator_id == k.to_string()).is_some())
+        .map(|(k, _v)| k.to_string()).collect::<Vec<String>>()    
+	}
+    
+
+    pub fn get_nft_series_single(&self, token_series_id: TokenSeriesId) -> TokenSeriesJson {
+		let token_series = self.token_series_by_id.get(&token_series_id).expect("Series does not exist");
+		TokenSeriesJson{
+            token_series_id,
+			metadata: token_series.metadata,
+			creator_id: token_series.creator_id,
+            royalty: token_series.royalty,
+		}
+	}
+    
     pub fn get_market(&self,
+        token: Option<TokenSeriesId>,
+        owner: Option<AccountId>,
+        creator_id: Option<AccountId>,
+        category: Option<i128>,
         from_index: Option<U128>,
         limit: Option<u64>) -> Vec<MarketView> {
             
@@ -828,7 +961,7 @@ impl Contract {
             let limit = limit.map(|v| v as usize).unwrap_or(usize::MAX);
             assert_ne!(limit, 0, "Cannot provide limit of 0.");
 
-            self.marketplace.iter()
+        let mut result: Vec<MarketView> = self.marketplace.iter()
             .skip(start_index as usize)
             .take(limit)
             .map(|(k, s)| MarketView {
@@ -839,19 +972,125 @@ impl Contract {
             price: s.price,
             category: s.category,
             royalty: s.royalty,
+            copy: self.nft_num_copy(k.to_string()),
             reviews: self.nft_review(k.to_string()),
-        }).collect()
+        }).collect();
+
+        if token.is_some() {
+            let token_id = token.unwrap().clone();
+            result = result.iter().filter(|x| x.token_series_id == token_id)
+                        .skip(start_index as usize)
+                        .take(limit)
+                        .map(|x| MarketView {
+                        token_series_id: x.token_series_id.to_string(),
+                        metadata: x.metadata.clone(),
+                        owner_id: x.owner_id.clone(),
+                        creator_id: x.creator_id.clone(),
+                        price: x.price,
+                        category: x.category.clone(),
+                        royalty: x.royalty.clone(),
+                        copy: self.nft_num_copy(x.token_series_id.to_string()),
+                        reviews: self.nft_review(x.token_series_id.to_string()),
+                    }).collect();
+        };
+
+        if owner.is_some() {
+            let owner_id = owner.unwrap().clone();
+            result = result.iter().filter(|x| x.owner_id == owner_id)
+                        .skip(start_index as usize)
+                        .take(limit)
+                        .map(|x| MarketView {
+                        token_series_id: x.token_series_id.to_string(),
+                        metadata: x.metadata.clone(),
+                        owner_id: x.owner_id.clone(),
+                        creator_id: x.creator_id.clone(),
+                        price: x.price,
+                        category: x.category.clone(),
+                        royalty: x.royalty.clone(),
+                        copy: self.nft_num_copy(x.token_series_id.to_string()),
+                        reviews: self.nft_review(x.token_series_id.to_string()),
+                    }).collect();
+        };
+        //near create-account venix.venixcon.testnet --masterAccount venixcon.testnet --initialBalance 50
+        if creator_id.is_some() {
+            let creator = creator_id.unwrap().clone();
+            result = result.iter().filter(|x| x.creator_id == creator)
+                        .skip(start_index as usize)
+                        .take(limit)
+                        .map(|x| MarketView {
+                        token_series_id: x.token_series_id.to_string(),
+                        metadata: x.metadata.clone(),
+                        owner_id: x.owner_id.clone(),
+                        creator_id: x.creator_id.clone(),
+                        price: x.price,
+                        category: x.category.clone(),
+                        royalty: x.royalty.clone(),
+                        copy: self.nft_num_copy(x.token_series_id.to_string()),
+                        reviews: self.nft_review(x.token_series_id.to_string()),
+                    }).collect();
+        };
+
+        if category.is_some() {
+            result = result.iter().filter(|x| x.category.get(&category.unwrap()).is_some())
+                        .skip(start_index as usize)
+                        .take(limit)
+                        .map(|x| MarketView {
+                        token_series_id: x.token_series_id.to_string(),
+                        metadata: x.metadata.clone(),
+                        owner_id: x.owner_id.clone(),
+                        creator_id: x.creator_id.clone(),
+                        price: x.price,
+                        category: x.category.clone(),
+                        royalty: x.royalty.clone(),
+                        copy: self.nft_num_copy(x.token_series_id.to_string()),
+                        reviews: self.nft_review(x.token_series_id.to_string()),
+                    }).collect();
+        };
+        
+        result
     }
 
-    pub fn get_nft_series_single(&self, token_series_id: TokenSeriesId) -> TokenSeriesJson {
-		let token_series = self.token_series_by_id.get(&token_series_id).expect("Series does not exist");
-		TokenSeriesJson{
-            token_series_id,
-			metadata: token_series.metadata,
-			creator_id: token_series.creator_id,
-            royalty: token_series.royalty,
-		}
-	}
+    pub fn get_market_single(&self, token_series_id: TokenSeriesId) -> MarketView {
+            
+        let data = self.marketplace.get(&token_series_id).expect("Token not exist");
+        
+        MarketView {
+            token_series_id: data.token_series_id.to_string(),
+            metadata: data.metadata,
+            owner_id: data.owner_id,
+            creator_id: data.creator_id,
+            price: data.price,
+            category: data.category,
+            royalty: data.royalty,
+            copy: self.nft_num_copy(data.token_series_id.to_string()),
+            reviews: self.nft_review(data.token_series_id.to_string()),
+        }
+    }
+
+    pub fn nft_num_copy(&self, token_series_id: String) -> i64 {
+        let mut token: String = token_series_id.to_string();
+        let token_len = token_series_id.split(TOKEN_DELIMETER).collect::<Vec<&str>>().len();
+        if token_len == 2 {
+            token = token_series_id.split(TOKEN_DELIMETER).collect::<Vec<&str>>()[0].to_string();
+        } else if token_len != 1 {
+            env::panic(b"Invalid token_series_id")
+        }
+
+        /*match token_series_id.split(TOKEN_DELIMETER).collect::<Vec<&str>>().len() {
+            1=> {
+                token = token_series_id.to_string();
+            },
+            2=> { 
+                token = token_series_id.split(TOKEN_DELIMETER).collect::<Vec<&str>>()[0].to_string();
+            },
+            _=> env::panic(b"Invalid token_series_id"),
+        };*/
+
+        let copy: i64 = self.token_series_by_id.get(&token).expect("Token not exist").tokens.len() as i64;
+        
+        copy
+    }
+
 
     pub fn get_market_category(&self, category: i128,
         from_index: Option<U128>,
@@ -876,14 +1115,21 @@ impl Contract {
             price: s.price,
             category: s.category,
             royalty: s.royalty,
+            copy: self.nft_num_copy(k.to_string()),
             reviews: self.nft_review(k.to_string()),
         }).collect()
     }
 
 
     pub fn nft_review(&self, token_id: TokenId) -> Vec<Review> {
-        let mut token: String = "".to_string();
-        match token_id.split(TOKEN_DELIMETER).collect::<Vec<&str>>().len() {
+        let mut token: String = token_id.to_string();
+        let token_len = token_id.split(TOKEN_DELIMETER).collect::<Vec<&str>>().len();
+        if token_len == 2 {
+            token = token_id.split(TOKEN_DELIMETER).collect::<Vec<&str>>()[0].to_string();
+        } else if token_len != 1 {
+            env::panic(b"Invalid token_id")
+        }
+        /* match token_id.split(TOKEN_DELIMETER).collect::<Vec<&str>>().len() {
             1=> {
                     token = token_id;
                 },
@@ -891,9 +1137,9 @@ impl Contract {
                     token = token_id.split(TOKEN_DELIMETER).collect::<Vec<&str>>()[0].to_string();
                 },
             _=> env::panic(b"token_series_id invalid"),
-        };
+        };*/
 
-        let mut token_series = self.token_series_by_id.get(&token).expect("Token series not exist");
+        let token_series = self.token_series_by_id.get(&token).expect("Token series not exist");
 
         token_series.reviews.iter()
         .map(|x| Review {
@@ -904,7 +1150,7 @@ impl Contract {
     }
 
 
-    pub fn get_Best_sellers(&self) -> Vec<ProfileJson> {
+    pub fn get_best_sellers(&self) -> Vec<ProfileJson> {
         self.profile.iter().filter(|(_k, s)| s.sales > 0)
         .map(|(k, s)| ProfileJson {
             user_id: k.to_string(),
@@ -915,6 +1161,7 @@ impl Contract {
             website: s.website.unwrap(),
             twitter: s.twitter.unwrap(),
             sales: s.sales,
+            avatar: s.avatar.unwrap(),
         }).collect()
     }
 
@@ -998,7 +1245,6 @@ impl Contract {
 
     pub fn get_nft_series_category(
         &self,
-        creator_id: AccountId,
         category: i128,
         from_index: Option<U128>,
         limit: Option<u64>,
