@@ -1,10 +1,10 @@
 
-/* use near_contract_standards::non_fungible_token::core::{
+/*use near_contract_standards::non_fungible_token::core::{
     NonFungibleTokenCore, NonFungibleTokenResolver,
-}; */
-use near_contract_standards::non_fungible_token::core::{
+};*/
+/*use near_contract_standards::non_fungible_token::core::{
     NonFungibleTokenCore
-};
+};*/
 use near_contract_standards::non_fungible_token::metadata::{
     NFTContractMetadata, NonFungibleTokenMetadataProvider, TokenMetadata, NFT_METADATA_SPEC,
 };
@@ -16,7 +16,7 @@ use near_sdk::borsh::{self, BorshDeserialize, BorshSerialize};
 use near_sdk::json_types::ValidAccountId;
 use near_sdk::{
     env, near_bindgen, AccountId, BorshStorageKey, PanicOnDefault, Promise, Balance,
-    serde_json::json, assert_one_yocto,
+    serde_json::json, assert_one_yocto, Gas,
 }; /* PromiseOrValue, */
 use near_sdk::collections::{LazyOption, UnorderedMap, UnorderedSet};
 
@@ -25,8 +25,8 @@ use serde::Deserialize;
 use std::collections::HashMap;
 use near_sdk::env::is_valid_account_id;
 
-near_sdk::setup_alloc!();
 
+near_sdk::setup_alloc!();
 
 
 pub type TokenSeriesId = String;
@@ -42,10 +42,15 @@ const MAX_PRICE: Balance = 1_000_000_000 * 10u128.pow(24);
 /*
 const GAS_FOR_RESOLVE_TRANSFER: Gas = 10_000_000_000_000;
 const GAS_FOR_NFT_TRANSFER_CALL: Gas = 30_000_000_000_000 + GAS_FOR_RESOLVE_TRANSFER;
+
 const GAS_FOR_NFT_APPROVE: Gas = 10_000_000_000_000;
 const GAS_FOR_MINT: Gas = 90_000_000_000_000;
+
 const NO_DEPOSIT: Balance = 0;
+
+const CONTRACT_ID: &str = "book.bookshop2.testnet";
 */
+
 
 
 #[derive(BorshDeserialize, BorshSerialize, Serialize, Deserialize, Clone)]
@@ -113,7 +118,7 @@ pub struct TokenSeriesJson {
     royalty: HashMap<AccountId, u32>
 }
 
-#[derive(BorshDeserialize, BorshSerialize, Serialize, Deserialize)]
+#[derive(BorshDeserialize, BorshSerialize, Serialize, Deserialize, Clone)]
 #[serde(crate = "near_sdk::serde")]
 pub struct MarketJson {
     token_series_id: TokenSeriesId,
@@ -567,12 +572,26 @@ impl Contract {
 
     #[payable]
     pub fn put_nft_series_price(&mut self, token_series_id: TokenSeriesId
-        , price: Option<U128>
-    ) -> Option<U128> {
+        , price: U128
+    ) -> U128 {
         assert_one_yocto();
         let mut owner_by_id: Option<AccountId> = None;
         let mut token_id: TokenSeriesId = token_series_id.clone(); 
         let mut category: HashMap<i128, CategoriesObjet> = HashMap::new();
+        let mut token_metadata = TokenMetadata {
+            title: None,
+            description: None,
+            media: None,
+            media_hash: None,
+            copies: None,
+            issued_at: None,
+            expires_at: None,
+            starts_at: None,
+            updated_at: None,
+            extra: None,
+            reference: None,
+            reference_hash: None,
+        };
         match token_series_id.split(TOKEN_DELIMETER).collect::<Vec<&str>>().len() {
             1=> {
                     token_id = token_series_id.clone();
@@ -590,51 +609,57 @@ impl Contract {
                         "token series is not mintable"
                     );
                     
-                    if price.is_none() {
+                    token_metadata = token_series.metadata.clone();
+
+                    if price.0 <= 0 {
                         token_series.price = None;
                     } else {
                         assert!(
-                            price.unwrap().0 < MAX_PRICE,
+                            price.0 < MAX_PRICE,
                             "price higher than {}",
                             MAX_PRICE
                         );
-                        token_series.price = Some(price.unwrap().0);
+                        token_series.price = Some(price.0);
                     }
             
                     self.token_series_by_id.insert(&token_id, &token_series);
                 },
             2=> {
                     token_id = token_series_id.split(TOKEN_DELIMETER).collect::<Vec<&str>>()[0].to_string();
-                    let token_series = self.token_series_by_id.get(&token_id).expect("Token series not exist");
-                    category = token_series.category;
                     let owner_id = self.tokens.owner_by_id.get(&token_series_id).expect("No token id");
                     owner_by_id = Some(owner_id);
                     
+                    /*assert_eq!(
+                        env::predecessor_account_id() == owner_by_id.clone(),
+                        "Owner only"
+                    );*/
+                    token_metadata = self.tokens.token_metadata_by_id.as_ref().unwrap().get(&token_series_id).unwrap();
                     
                 },
             _=> env::panic(b"token_series_id invalid"),
         };
 
+
         if owner_by_id.is_some() {
             let tokenseries = self.token_series_by_id.get(&token_id).expect("Token series not exist");
         
-            let token_metadata = tokenseries.metadata.clone();
             let caller_id = tokenseries.creator_id.clone();
             let royalty_res = tokenseries.royalty.clone();
-
-            if price.is_none() {
+            category = tokenseries.category;
+            
+            if price.0 <= 0 {
                 if self.marketplace.get(&token_series_id).is_some() {
                     self.marketplace.remove(&token_series_id);
                 };
             } else {
                 assert!(
-                    price.unwrap().0 < MAX_PRICE,
+                    price.0 < MAX_PRICE,
                     "price higher than {}",
                     MAX_PRICE
                 );
                 if self.marketplace.get(&token_series_id).is_some() {
                     let mut market = self.marketplace.get(&token_series_id).expect("error");
-                    market.price = price.unwrap().0;
+                    market.price = price.0;
                     self.marketplace.insert(&token_series_id, &market);
                 } else {
                     self.marketplace.insert(&token_series_id, &MarketJson {
@@ -642,7 +667,7 @@ impl Contract {
                         metadata: token_metadata.clone(),
                         owner_id: owner_by_id.unwrap(),
                         creator_id: caller_id.to_string(),
-                        price: price.unwrap().0,
+                        price: price.0,
                         category: category,
                         royalty: royalty_res.clone(),
                     });
@@ -662,11 +687,11 @@ impl Contract {
     ) -> TokenId {
         let initial_storage_usage = env::storage_usage();
         let mut token_id: TokenId =  "-".to_string();
+        let attached_deposit = env::attached_deposit();
         match token_series_id.split(TOKEN_DELIMETER).collect::<Vec<&str>>().len() {
             1=> {
                     let token_series = self.token_series_by_id.get(&token_series_id).expect("Token series not exist");
                     let price: u128 = token_series.price.expect("not for sale");
-                    let attached_deposit = env::attached_deposit();
                     assert!(
                         attached_deposit >= price,
                         "attached deposit is less than price : {}",
@@ -692,7 +717,6 @@ impl Contract {
             2=> {
                     let token_data = self.marketplace.get(&token_series_id).expect("Token not for sale");
                     let price: u128 = token_data.price;
-                    let attached_deposit = env::attached_deposit();
                     assert!(
                         attached_deposit >= price,
                         "attached deposit is less than price : {}",
@@ -704,8 +728,15 @@ impl Contract {
                     self.profile.insert(&token_data.owner_id, &profile);
 
                     self.transaction_add(token_series_id.clone(), receiver_id.to_string(), price);
+                    env::log(b"paso 1");
+                    // self.internal_transfer(token_data.owner_id.clone(), receiver_id, token_series_id.clone(), None);
+                    // self.nft_transfered(receiver_id.clone(), token_series_id.clone(), None, None);
                     
-                    self.tokens.nft_transfer(receiver_id.clone(), token_series_id.clone(), None, None);
+                    self.tokens.internal_transfer(&token_data.owner_id.clone(), &receiver_id.to_string(), &token_series_id, None, None);
+                       
+                    env::log(b"paso 2");
+
+                    //self.tokens.nft_transfered(self, token_data.owner_id.clone(), receiver_id.clone(), token_series_id.clone(), None);
 
                     let for_vault = price as u128 * VAULT_FEE / 10_000u128;
                     let price_deducted = price - for_vault;
@@ -749,7 +780,7 @@ impl Contract {
         let token_id = format!("{}{}{}", &token_series_id, TOKEN_DELIMETER, num_tokens + 1);
         token_series.tokens.insert(&token_id);
         self.token_series_by_id.insert(&token_series_id, &token_series);
-        let title: String = format!("{}{}{}{}{}", token_series.metadata.title.unwrap().clone(), TITLE_DELIMETER, &token_series_id, TITLE_DELIMETER, (num_tokens + 1).to_string());
+        let title: String = format!("{} - {}{}{}{}", token_series.metadata.title.unwrap().clone(), TITLE_DELIMETER, &token_series_id, TITLE_DELIMETER, (num_tokens + 1).to_string());
         
         
         let metadata = TokenMetadata {
@@ -867,6 +898,9 @@ impl Contract {
             let mut token_series = self.token_series_by_id.get(&token[0].to_string()).expect("Token series not exist");
             let owner_id = self.tokens.owner_by_id.get(&token_id.clone()).expect("Token not exist");
             assert!(owner_id == user_id.clone(), "You must own a token from this series to be able to leave a review");
+            if token_series.reviews.iter().find(|review| review.user_id == user_id.clone()).is_some() {
+                env::panic(b"You already left a review");
+            }
             
             let data = Review {
                 user_id: user_id.clone(),
@@ -888,11 +922,74 @@ impl Contract {
     }
 
 
+    
     // views
+
+    pub fn get_nft_token_for_owner_on_sales(
+        &self,
+        account_id: ValidAccountId,
+        from_index: Option<U128>,
+        limit: Option<u64>,
+    ) -> Vec<MarketView> {
+        let tokens_per_owner = self.tokens.tokens_per_owner.as_ref().expect(
+            "Could not find tokens_per_owner when calling a method on the enumeration standard.",
+        );
+        let token_set = if let Some(token_set) = tokens_per_owner.get(account_id.as_ref()) {
+            token_set
+        } else {
+            return vec![];
+        };
+        let limit = limit.map(|v| v as usize).unwrap_or(usize::MAX);
+        assert_ne!(limit, 0, "Cannot provide limit of 0.");
+        let start_index: u128 = from_index.map(From::from).unwrap_or_default();
+        assert!(
+            token_set.len() as u128 > start_index,
+            "Out of bounds, please use a smaller from_index."
+        );
+        token_set
+            .iter()
+            .skip(start_index as usize)
+            .take(limit)
+            .map(|token_id| self.nft_token_for_owner_on_sales(token_id, account_id.to_string()))
+            .collect()
+    }
+
+    fn nft_token_for_owner_on_sales(&self, token_id: TokenSeriesId, owner_id: AccountId) -> MarketView {    
+        if self.marketplace.get(&token_id).is_some() {
+            let market = self.marketplace.get(&token_id).expect("Token not exist");
+            MarketView {
+                token_series_id: market.token_series_id.to_string(),
+                metadata: self.tokens.token_metadata_by_id.as_ref().unwrap().get(&token_id).unwrap(),
+                owner_id: market.owner_id,
+                creator_id: market.creator_id,
+                price: market.price,
+                category: market.category,
+                royalty: market.royalty,
+                copy: self.nft_num_copy(market.token_series_id.to_string()),
+                reviews: self.nft_review(market.token_series_id.to_string()),
+            }
+        } else {
+            let token = self.token_series_by_id.get(&token_id.split(TOKEN_DELIMETER).collect::<Vec<&str>>()[0].to_string()).expect("Token series not exist");
+            MarketView {
+                token_series_id: token_id.to_string(),
+                metadata: self.tokens.token_metadata_by_id.as_ref().unwrap().get(&token_id).unwrap(),
+                owner_id: owner_id,
+                creator_id: token.creator_id,
+                price: 0,
+                category: token.category,
+                royalty: token.royalty,
+                copy: self.nft_num_copy(token_id.to_string()),
+                reviews: token.reviews.iter().map(|x| x).collect::<Vec<Review>>(),
+            }
+        }
+    }
+
+
     pub fn get_top_author_sales(&self, top: Option<i8>) -> Vec<AuthorSales> {
         let top_limit = top.unwrap_or(10);
 
-        let mut top_authors: Vec<AuthorSales> = self.profile.iter().filter(|(_k, v)| v.sales > 0)
+        let mut top_authors: Vec<AuthorSales> = self.profile.iter()
+                                                .filter(|(_k, v)| v.sales > 0)
                                                 .map(|(k, v)| AuthorSales {author_id: k, sales: v.sales}).collect::<Vec<AuthorSales>>();
         top_authors.sort_by(|a, b| b.sales.cmp(&a.sales));
 
@@ -908,7 +1005,8 @@ impl Contract {
     pub fn get_top_series_sales(&self, top: Option<i8>) -> Vec<TransactionSeriesView> {
         let top_limit = top.unwrap_or(10);
 
-        let mut top_series: Vec<TransactionSeries> = self.transaction_series.iter().filter(|(_k, v)| v.sales > 0)
+        let mut top_series: Vec<TransactionSeries> = self.transaction_series.iter()
+                                                .filter(|(k, v)| v.sales > 0 && self.marketplace.iter().find(|(k2, _v2)| k2 == k).is_some())
                                                 .map(|(k, v)| TransactionSeries {
                                                     token_serie_id: k.to_string(),
                                                     operations: v.operations,
@@ -944,110 +1042,57 @@ impl Contract {
             royalty: token_series.royalty,
 		}
 	}
-    
+
+
     pub fn get_market(&self,
         token: Option<TokenSeriesId>,
         owner: Option<AccountId>,
         creator_id: Option<AccountId>,
         category: Option<i128>,
         from_index: Option<U128>,
-        limit: Option<u64>) -> Vec<MarketView> {
+        limit: Option<u64>
+    ) -> Vec<MarketView> {
             
-            let start_index: u128 = from_index.map(From::from).unwrap_or_default();
-            assert!(
-                (self.marketplace.len() as u128) > start_index,
-                "Out of bounds, please use a smaller from_index."
-            );
-            let limit = limit.map(|v| v as usize).unwrap_or(usize::MAX);
-            assert_ne!(limit, 0, "Cannot provide limit of 0.");
+        let start_index: u128 = from_index.map(From::from).unwrap_or_default();
+        assert!((self.marketplace.len() as u128) > start_index, "Out of bounds, please use a smaller from_index.");
+        let limit = limit.map(|v| v as usize).unwrap_or(usize::MAX);
+        assert_ne!(limit, 0, "Cannot provide limit of 0.");
 
-        let mut result: Vec<MarketView> = self.marketplace.iter()
-            .skip(start_index as usize)
-            .take(limit)
-            .map(|(k, s)| MarketView {
-            token_series_id: k.to_string(),
-            metadata: s.metadata,
-            owner_id: s.owner_id,
-            creator_id: s.creator_id,
-            price: s.price,
-            category: s.category,
-            royalty: s.royalty,
-            copy: self.nft_num_copy(k.to_string()),
-            reviews: self.nft_review(k.to_string()),
-        }).collect();
+        let mut result: Vec<MarketJson> = self.marketplace.iter().map(|(_k, v)| v).collect::<Vec<MarketJson>>();
 
         if token.is_some() {
             let token_id = token.unwrap().clone();
-            result = result.iter().filter(|x| x.token_series_id == token_id)
-                        .skip(start_index as usize)
-                        .take(limit)
-                        .map(|x| MarketView {
-                        token_series_id: x.token_series_id.to_string(),
-                        metadata: x.metadata.clone(),
-                        owner_id: x.owner_id.clone(),
-                        creator_id: x.creator_id.clone(),
-                        price: x.price,
-                        category: x.category.clone(),
-                        royalty: x.royalty.clone(),
-                        copy: self.nft_num_copy(x.token_series_id.to_string()),
-                        reviews: self.nft_review(x.token_series_id.to_string()),
-                    }).collect();
+            result = result.iter().filter(|x| x.token_series_id == token_id).map(|x| x.clone()).collect();
         };
 
         if owner.is_some() {
             let owner_id = owner.unwrap().clone();
-            result = result.iter().filter(|x| x.owner_id == owner_id)
-                        .skip(start_index as usize)
-                        .take(limit)
-                        .map(|x| MarketView {
-                        token_series_id: x.token_series_id.to_string(),
-                        metadata: x.metadata.clone(),
-                        owner_id: x.owner_id.clone(),
-                        creator_id: x.creator_id.clone(),
-                        price: x.price,
-                        category: x.category.clone(),
-                        royalty: x.royalty.clone(),
-                        copy: self.nft_num_copy(x.token_series_id.to_string()),
-                        reviews: self.nft_review(x.token_series_id.to_string()),
-                    }).collect();
+            result = result.iter().filter(|x| x.owner_id == owner_id).map(|x| x.clone()).collect();
         };
-        //near create-account venix.venixcon.testnet --masterAccount venixcon.testnet --initialBalance 50
+
         if creator_id.is_some() {
             let creator = creator_id.unwrap().clone();
-            result = result.iter().filter(|x| x.creator_id == creator)
-                        .skip(start_index as usize)
-                        .take(limit)
-                        .map(|x| MarketView {
-                        token_series_id: x.token_series_id.to_string(),
-                        metadata: x.metadata.clone(),
-                        owner_id: x.owner_id.clone(),
-                        creator_id: x.creator_id.clone(),
-                        price: x.price,
-                        category: x.category.clone(),
-                        royalty: x.royalty.clone(),
-                        copy: self.nft_num_copy(x.token_series_id.to_string()),
-                        reviews: self.nft_review(x.token_series_id.to_string()),
-                    }).collect();
+            result = result.iter().filter(|x| x.creator_id == creator).map(|x| x.clone()).collect();
         };
 
         if category.is_some() {
-            result = result.iter().filter(|x| x.category.get(&category.unwrap()).is_some())
-                        .skip(start_index as usize)
-                        .take(limit)
-                        .map(|x| MarketView {
-                        token_series_id: x.token_series_id.to_string(),
-                        metadata: x.metadata.clone(),
-                        owner_id: x.owner_id.clone(),
-                        creator_id: x.creator_id.clone(),
-                        price: x.price,
-                        category: x.category.clone(),
-                        royalty: x.royalty.clone(),
-                        copy: self.nft_num_copy(x.token_series_id.to_string()),
-                        reviews: self.nft_review(x.token_series_id.to_string()),
-                    }).collect();
+            result = result.iter().filter(|x| x.category.get(&category.unwrap()).is_some()).map(|x| x.clone()).collect();
         };
         
-        result
+        result.iter()
+        .skip(start_index as usize)
+        .take(limit)
+        .map(|x| MarketView {
+            token_series_id: x.token_series_id.to_string(),
+            metadata: x.metadata.clone(),
+            owner_id: x.owner_id.clone(),
+            creator_id: x.creator_id.clone(),
+            price: x.price,
+            category: x.category.clone(),
+            royalty: x.royalty.clone(),
+            copy: self.nft_num_copy(x.token_series_id.to_string()),
+            reviews: self.nft_review(x.token_series_id.to_string()),
+        }).collect()
     }
 
     pub fn get_market_single(&self, token_series_id: TokenSeriesId) -> MarketView {
@@ -1075,16 +1120,6 @@ impl Contract {
         } else if token_len != 1 {
             env::panic(b"Invalid token_series_id")
         }
-
-        /*match token_series_id.split(TOKEN_DELIMETER).collect::<Vec<&str>>().len() {
-            1=> {
-                token = token_series_id.to_string();
-            },
-            2=> { 
-                token = token_series_id.split(TOKEN_DELIMETER).collect::<Vec<&str>>()[0].to_string();
-            },
-            _=> env::panic(b"Invalid token_series_id"),
-        };*/
 
         let copy: i64 = self.token_series_by_id.get(&token).expect("Token not exist").tokens.len() as i64;
         
@@ -1129,15 +1164,6 @@ impl Contract {
         } else if token_len != 1 {
             env::panic(b"Invalid token_id")
         }
-        /* match token_id.split(TOKEN_DELIMETER).collect::<Vec<&str>>().len() {
-            1=> {
-                    token = token_id;
-                },
-            2=> {
-                    token = token_id.split(TOKEN_DELIMETER).collect::<Vec<&str>>()[0].to_string();
-                },
-            _=> env::panic(b"token_series_id invalid"),
-        };*/
 
         let token_series = self.token_series_by_id.get(&token).expect("Token series not exist");
 
@@ -1305,7 +1331,7 @@ impl Contract {
 
 }
 
-/*near_contract_standards::impl_non_fungible_token_core!(Contract, tokens);*/
+// near_contract_standards::impl_non_fungible_token_core!(Contract, tokens);
 near_contract_standards::impl_non_fungible_token_approval!(Contract, tokens);
 near_contract_standards::impl_non_fungible_token_enumeration!(Contract, tokens);
 
